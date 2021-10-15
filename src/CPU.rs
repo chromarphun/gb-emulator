@@ -26,5 +26,9 @@ impl CentralProcessingUnit {
             memory_mut,
         }
     }
+    fn nop(&mut self) -> String {
+        self.pc += 1
+        "NOP".to_string()
+    }
 
 }
