@@ -84,12 +84,20 @@ impl CentralProcessingUnit {
                 code.push_str("(DE) ");
             }
             0x22 => {
-                addr = (self.regs[7] << 8) + self.regs[8];
-                code.push_str("(HL) ");
+                let HL: u16 = (self.regs[7] << 8) + self.regs[8];
+                addr = HL;
+                HL.wrapping_add(1);
+                self.regs[8] = HL & 0b11111111;
+                self.regs[7] = HL >> 8;
+                code.push_str("(HL +) ");
             }
             0x32 => {
-                addr = sp;
-                code.push_str("(SP) ");
+                let HL: u16 = (self.regs[7] << 8) + self.regs[8];
+                addr = HL;
+                HL.wrapping_sub(1);
+                self.regs[8] = HL & 0b11111111;
+                self.regs[7] = HL >> 8;
+                code.push_str("(HL -) ");
             }
         }
         *memory[addr] = self.regs[0]
@@ -98,7 +106,7 @@ impl CentralProcessingUnit {
     }
     fn inc_reg_16(&mut self) -> String {
         let memory = memory_mut.lock().unwrap();
-        let byte = *memory[pc];
+        let byte = *memory[self.pc];
         let code = "INC ".to_string()
         if byte_1 == 0x33 {
             self.sp.wrapping_add(1);
@@ -139,6 +147,148 @@ impl CentralProcessingUnit {
         code
     }
     fn inc_reg_8(&mut self) -> String {
-        
+        let memory = memory_mut.lock().unwrap();
+        let byte = *memory[self.pc];
+        let code = "INC ".to_string();
+        let val: u8 = 0;
+        match byte {
+            0x04 => {
+                self.regs[1].wrapping_add(1);
+                let val = self.regs[1];
+                code.push_str("B");
+            }
+            0x14 => {
+                self.regs[3].wrapping_add(1);
+                let val = self.regs[3];
+                code.push_str("D");
+            }
+            0x24 => {
+                self.regs[7].wrapping_add(1);
+                let val = self.regs[7];
+                code.push_str("H");
+            }
+            0x34 => {
+                let addr: u16 = (self.regs[7] << 8) + self.regs[8];
+                *memory[addr].wrapping_add(1);
+                let val = *memory[addr];
+                code.push_str("(HL)");
+            }
+            0x0C => {
+                self.regs[2].wrapping_add(1);
+                let val = self.regs[2];
+                code.push_str("C");
+            }
+            0x1C => {
+                self.regs[4].wrapping_add(1);
+                let val = self.regs[4];
+                code.push_str("E");
+            }
+            0x2C => {
+                self.regs[8].wrapping_add(1);
+                let val = self.regs[8];
+                code.push_str("L");
+            }
+            0x3C => {
+                self.regs[0].wrapping_add(1);
+                let val = self.regs[0];
+                code.push_str("A");
+            }
+        }
+        if val == 0 {
+            regs[5] |= 0b10000000;
+        }
+        regs[5] &= 0b10111111;
+        if (val & 0b00001111) == 0 {
+            regs[5]|=  0b00100000;
+        }
+        self.pc += 1;
+        code
+    }
+    fn dec_reg_8(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let byte = *memory[self.pc];
+        let code = "INC ".to_string();
+        let val: u8 = 0;
+        match byte {
+            0x05 => {
+                self.regs[1].wrapping_sub(1);
+                let val = self.regs[1];
+                code.push_str("B");
+            }
+            0x15 => {
+                self.regs[3].wrapping_sub(1);
+                let val = self.regs[3];
+                code.push_str("D");
+            }
+            0x25 => {
+                self.regs[7].wrapping_sub(1);
+                let val = self.regs[7];
+                code.push_str("H");
+            }
+            0x35 => {
+                let addr: u16 = (self.regs[7] << 8) + self.regs[8];
+                *memory[addr].wrapping_sub(1);
+                let val = *memory[addr];
+                code.push_str("(HL)");
+            }
+            0x0D => {
+                self.regs[2].wrapping_sub(1);
+                let val = self.regs[2];
+                code.push_str("C");
+            }
+            0x1D => {
+                self.regs[4].wrapping_sub(1);
+                let val = self.regs[4];
+                code.push_str("E");
+            }
+            0x2D => {
+                self.regs[8].wrapping_sub(1);
+                let val = self.regs[8];
+                code.push_str("L");
+            }
+            0x3D => {
+                self.regs[0].wrapping_sub(1);
+                let val = self.regs[0];
+                code.push_str("A");
+            }
+        }
+        if val == 0 {
+            regs[5] |= 0b10000000;
+        }
+        regs[5] &= 0b10111111;
+        if (val & 0b00001111) == 0b1111 {
+            regs[5]|=  0b00100000;
+        }
+        self.pc += 1;
+        code
+    }
+    fn ld_reg_8(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let byte_1 = *memory[pc];
+        let byte_2 = *memory[pc+1];
+        let code = "LD ".to_string()
+        match byte_1 {
+            0x06 => {
+                self.regs[1] = byte_2;
+                code.push_str("B ");
+
+            },
+            0x16 => {
+                self.regs[3] = byte_2;
+                code.push_str("D ");
+            }
+            0x26 => {
+                self.regs[7] = byte_2;
+                code.push_str("H ");
+            }
+            0x36 => {
+                let addr: u16 = (self.regs[7] << 8) + self.regs[8];
+                *memory[addr] = byte_2;
+                code.push_str("(HL) ");
+            }
+        }
+        code.push_str(&format!("{:X}", byte_2));
+        self.pc += 2;
+        code
     }
 }
