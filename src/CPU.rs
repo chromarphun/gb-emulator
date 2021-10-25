@@ -291,4 +291,22 @@ impl CentralProcessingUnit {
         self.pc += 2;
         code
     }
+    fn rot_a_left(&mut self) -> String {
+        let bit = self.regs[0] >> 7;
+        self.regs[0] <<= 1;
+        regs[5] &= 0b00011111;
+        regs[5] |= (bit << 4);
+        self.pc +=1 ;
+        "RLCA".to_string()
+    }
+    fn rot_a_left_carry(&mut self) -> String {
+        let last_bit = self.regs[0] >> 7;
+        let first_bit = self.regs[0] & 1;
+        self.regs[0] <<= 1;
+        self.regs[0] |= first_bit;
+        regs[5] &= 0b00011111;
+        regs[5] |= (last_bit << 4);
+        self.pc += 1;
+        "RLC".to_string()
+    }
 }
