@@ -68,7 +68,7 @@ impl CentralProcessingUnit {
         self.pc += 3;
         code
     }
-    fn ld_reg_addr_A(&mut self) -> String {
+    fn ld_reg_addr_a(&mut self) -> String {
         let memory = memory_mut.lock().unwrap();
         let byte = *memory[pc];
         let mut addr: u16 = 0;
@@ -308,5 +308,41 @@ impl CentralProcessingUnit {
         regs[5] |= (last_bit << 4);
         self.pc += 1;
         "RLC".to_string()
+    }
+    fn daa(&mut self) -> String {
+        let n_flag = (regs[5] >> 6) & 1;
+        let h_flag = (regs[5] >> 5) & 1;
+        let c_flag = (regs[5] >> 4) & 1;
+        if (!n_flag) {  // after an addition, adjust if (half-)carry occurred or if result is out of bounds
+            if (c_flag || regs[0] > 0x99) { a += 0x60; c_flag = 1; }
+            if (h_flag || (regs[0] & 0x0F) > 0x09) { a += 0x6; }
+        } else {  // after a subtraction, only adjust if (half-)carry occurred
+            if (c_flag) { regs[0] -= 0x60; }
+            if (h_flag) { regs[0] -= 0x6; }
+        }
+        self.pc+=1;
+        if regs[0] == 0 {
+            regs[5] |= 0x80;
+            regs[5] |= (1 << 5);
+        }
+        "DAA".to_string()
+    }
+    fn scf(&mut self) -> String {
+        regs[5] &= 0b10011111;
+        regs[5] |= 0x10;
+        self.pc += 1;
+        "SCF".to_string()
+    }
+    fn ld_addr_sp(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let addr = (self.pc + 1 << 8) + self.pc
+        *memory[addr] = self.sp & 0xFF;
+        *memory[addr + 1] = self.sp >> 4;
+        let mut code = "LD ".to_string();
+        code.push_str("(");
+        code.push_str(&format!("{:X}", addr));
+        code.push_str(") SP");
+        self.pc += 2;
+        code
     }
 }
