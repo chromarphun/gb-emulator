@@ -100,7 +100,7 @@ impl CentralProcessingUnit {
                 code.push_str("(HL -) ");
             }
         }
-        *memory[addr] = self.regs[0]
+        *memory[addr] = self.regs[0];
         self.pc += 1;
         code
     }
@@ -343,6 +343,76 @@ impl CentralProcessingUnit {
         code.push_str(&format!("{:X}", addr));
         code.push_str(") SP");
         self.pc += 2;
+        code
+    }
+    fn jr(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let byte_1 = *memory[pc];
+        let add = *memory[pc + 1] as i8;
+        let mut condition: = false;
+        let code = "JR ".to_string()
+        match byte_2 {
+            0x18 => {
+                condition = true;
+
+            },
+            0x20 => {
+                condition = ((regs[5]>>7) == 0);
+                code.push_str("NZ ");
+            },
+            0x28 => {
+                condition = ((regs[5]>>7) == 1);
+                code.push_str("Z ");
+            },
+            0x30 => {
+                condition = ((regs[5]>>4) == 0);
+                code.push_str("NC ");
+            },
+            0x38 => {
+                condition = ((regs[5]>>4) == 1);
+                code.push_str("C ");
+            },
+        }
+        code.push_str(&format!("{:X}", add));
+        if condition {
+            self.pc = self.pc.wrapping_add(add as u16);
+        }
+        code
+    }
+    fn ld_a_reg_addr(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let byte = *memory[pc];
+        let mut addr: u16 = 0;
+        let code = "LD A".to_string()
+        match byte {
+            0x0A => {
+                addr = (self.regs[1] << 8) + self.regs[2];
+                code.push_str("(BC)");
+
+            },
+            0x1A => {
+                addr = (self.regs[3] << 8) + self.regs[4];
+                code.push_str("(DE)");
+            }
+            0x2A => {
+                let HL: u16 = (self.regs[7] << 8) + self.regs[8];
+                addr = HL;
+                HL.wrapping_add(1);
+                self.regs[8] = HL & 0b11111111;
+                self.regs[7] = HL >> 8;
+                code.push_str("(HL +)");
+            }
+            0x3A => {
+                let HL: u16 = (self.regs[7] << 8) + self.regs[8];
+                addr = HL;
+                HL.wrapping_sub(1);
+                self.regs[8] = HL & 0b11111111;
+                self.regs[7] = HL >> 8;
+                code.push_str("(HL -)");
+            }
+        }
+        self.regs[0] = *memory[addr];
+        self.pc += 1;
         code
     }
 }
