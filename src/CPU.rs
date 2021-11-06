@@ -271,7 +271,6 @@ impl CentralProcessingUnit {
             0x06 => {
                 self.regs[1] = byte_2;
                 code.push_str("B ");
-
             },
             0x16 => {
                 self.regs[3] = byte_2;
@@ -286,6 +285,22 @@ impl CentralProcessingUnit {
                 *memory[addr] = byte_2;
                 code.push_str("(HL) ");
             }
+            0x0E => {
+                self.regs[2] = byte_2;
+                code.push_str("C ");
+            },
+            0x1E => {
+                self.regs[4] = byte_2;
+                code.push_str("E ");
+            },
+            0x2E => {
+                self.regs[8] = byte_2;
+                code.push_str("L ");
+            },
+            0x3E => {
+                self.regs[0] = byte_2;
+                code.push_str("A ");
+            },
         }
         code.push_str(&format!("{:X}", byte_2));
         self.pc += 2;
@@ -294,6 +309,7 @@ impl CentralProcessingUnit {
     fn rot_a_left(&mut self) -> String {
         let bit = self.regs[0] >> 7;
         self.regs[0] <<= 1;
+        self.regs[0] += bit;
         regs[5] &= 0b00011111;
         regs[5] |= (bit << 4);
         self.pc +=1 ;
@@ -301,13 +317,13 @@ impl CentralProcessingUnit {
     }
     fn rot_a_left_carry(&mut self) -> String {
         let last_bit = self.regs[0] >> 7;
-        let first_bit = self.regs[0] & 1;
+        let c_flag = (self.regs[5] >> 4) & 1;
         self.regs[0] <<= 1;
-        self.regs[0] |= first_bit;
+        self.regs[0] += c_flag;
         regs[5] &= 0b00011111;
         regs[5] |= (last_bit << 4);
         self.pc += 1;
-        "RLC".to_string()
+        "RLA".to_string()
     }
     fn daa(&mut self) -> String {
         let n_flag = (regs[5] >> 6) & 1;
@@ -414,5 +430,81 @@ impl CentralProcessingUnit {
         self.regs[0] = *memory[addr];
         self.pc += 1;
         code
+    }
+    fn dec_reg_16(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let byte = *memory[self.pc];
+        let code = "DEC ".to_string()
+        if byte_1 == 0x3B {
+            self.sp.wrapping_sub(1);
+            code.push_str("SP");
+        } else {
+            let mut r_low: usize = 9;
+            let mut r_high: usize = 9;
+            match byte_1  {
+                0x0B => {
+                    r_low = 2;
+                    r_high = 1;
+                    code.push_str("BC");
+                }
+                0x1B => {
+                    r_low = 3;
+                    r_high = 4;
+                    code.push_str("DE");
+                }
+                0x2B => {
+                    r_low = 7;
+                    r_high = 8;
+                    code.push_str("HL");
+                }
+            }
+            if self.regs[r_low] != 0x00 {
+                self.regs[r_low] -= 1;
+            } else {
+                if self.regs[r_high] != 0x00 {
+                    self.regs[r_high] -= 1;
+                    self.regs[r_low] = 0xFF;
+                } else {
+                    self.regs[r_high] = 0xFF;
+                    self.regs[r_low] = 0xFF;
+                }
+            }
+        }
+        self.pc += 1;
+        code
+    }
+    fn rot_a_right(&mut self) -> String {
+        let bit = self.regs[0] & 1;
+        self.regs[0] >>= 1;
+        self.regs[0] += (bit << 7);
+        regs[5] &= 0b00011111;
+        regs[5] |= (bit << 4);
+        self.pc +=1 ;
+        "RRCA".to_string()
+    }
+    fn rot_a_right_carry(&mut self) -> String {
+        let bit = self.regs[0] & 1;
+        let c_flag = (self.regs[5] >> 4) & 1;
+        self.regs[0] >>= 1;
+        self.regs[0] += (c_flag << 7);
+        regs[5] &= 0b00011111;
+        regs[5] |= (bit << 4);
+        self.pc += 1;
+        "RRA".to_string()
+    }
+    fn cpl(&mut self) -> String {
+        regs[5] |= 0b01100000;
+        regs[0] = !regs[0];
+        "CPL".to_string();
+    }
+    fn ccf(&mut self) -> String {
+        let c_flag = (regs[5] >> 4) & 1;
+        if c_flag {
+            regs[5] &= 0b10001111;
+        } else {
+            regs[5] |= 0b00010000;
+            regs[5] &= 0b10011111;
+        }
+        "CCF".to_string();
     }
 }
