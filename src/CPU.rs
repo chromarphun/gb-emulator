@@ -507,4 +507,118 @@ impl CentralProcessingUnit {
         }
         "CCF".to_string();
     }
+    fn ld_reg_reg(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let byte = *memory[pc];
+        let nib_1 = byte >> 4;
+        let nib_2 = byte & 0b1111;
+        let reg_1 = 0;
+        let reg_2 = 1;
+        let mut code = "LD ".to_string()
+        match nib_1 {
+            0x4 => {
+                if nib_2 <= 0x7 {
+                    reg_1 = 1;
+                } else {
+                    reg_1 = 2;
+                }
+            }
+            0x5 => {
+                if nib_2 <= 0x7 {
+                    reg_1 = 3;
+                } else {
+                    reg_1 = 4;
+                }
+            }
+            0x6 => {
+                if nib_2 <= 0x7 {
+                    reg_1 = 7;
+                } else {
+                    reg_1 = 8;
+                }
+            }
+            0x7 => reg_1 = 0            
+        }
+        match nib_2 {
+            0x0 => reg_2 = 1,
+            0x1 => reg_2 = 2,
+            0x2 => reg_2 = 3,
+            0x3 => reg_2 = 4,
+            0x4 => reg_2 = 7,
+            0x5 => reg_2 = 8,
+            0x7 => reg_2 = 0,
+            0x8 => reg_2 = 1,
+            0x9 => reg_2 = 2,
+            0xA => reg_2 = 3,
+            0xB => reg_2 = 4,
+            0xC => reg_2 = 7,
+            0xD => reg_2 = 8,
+            0xF => reg_2 = 0,
+        }
+        regs[reg_1] = regs[regs_2];
+        code.push_str(&self.reg_letter_map[reg_1]);
+        code.push_str(' ');
+        code.push_str(&self.reg_letter_map[reg_2]);
+        code
+    }
+    fn ld_reg_hl_addr(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let byte = *memory[pc];
+        let nib_1 = byte >> 4;
+        let nib_2 = byte & 0b1111;
+        let addr = (self.regs[7] << 8) + self.regs[8];
+        let mut reg = 0;
+        let mut code = "LD ".to_string()
+        if nib_2 == 6 {
+            match nib_1 {
+                0x4 => reg = 1,
+                0x5 => reg = 3,
+                0x6 => reg = 7,
+            }
+        } else {
+            match nib_1 {
+                0x4 => reg = 2,
+                0x5 => reg = 4,
+                0x6 => reg = 8,
+                0x7 => reg = 0
+            }
+        }
+        self.regs[reg] = *memory[addr];
+        code.push_str(&self.reg_letter_map[reg]);
+        code.push_str(" ");
+        code.push_str(&format!("({:X})", addr));
+        code 
+    }
+    fn ld_hl_addr_reg(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let byte = *memory[pc];
+        let nib_1 = byte >> 4;
+        let nib_2 = byte & 0b1111;
+        let addr = (self.regs[7] << 8) + self.regs[8];
+        let mut reg = 0;
+        let mut code = "LD ".to_string()
+        if nib_2 == 6 {
+            match nib_1 {
+                0x4 => reg = 1,
+                0x5 => reg = 3,
+                0x6 => reg = 7,
+            }
+        } else {
+            match nib_1 {
+                0x4 => reg = 2,
+                0x5 => reg = 4,
+                0x6 => reg = 8,
+                0x7 => reg = 0
+            }
+        }
+        *memory[addr] = self.regs[reg];
+        code.push_str(&format!("({:X})", addr));
+        code.push_str(" ");
+        code.push_str(&self.reg_letter_map[reg]);
+        code 
+    }
+    fn halt(&self) -> String {
+        "HALT"
+    }
+}
 }
