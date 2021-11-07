@@ -620,7 +620,7 @@ impl CentralProcessingUnit {
     fn halt(&self) -> String {
         "HALT"
     }
-    fn add_sub_a(&mut self) -> String {
+    fn arthimetic_a(&mut self) -> String {
         let memory = memory_mut.lock().unwrap();
         let byte = *memory[self.pc];
         let nib_1 = byte >> 4;
@@ -674,47 +674,72 @@ impl CentralProcessingUnit {
             op_val = *memory[self.pc + 1];
             code_val = format!("{:X}".to_string());
         }
-        let op_nib_1 = byte >> 4;
-        let op_nib_2 = byte & 0b1111;
+        let op_nib_1 = op_val >> 4;
+        let op_nib_2 = op_val & 0b1111;
         let mut additional = 0;
         let nib_1_mod = (nib_1-0x8) % 4
-        let mut carrying = false;
+        let mut second_half = false;
         let mut code = "";
-        if nib_2_mod >= 0x8 {
-            additional += (regs[5] >> 4) & 1;
-            carrying = true;
-        }
-        match (nib_1-0x8) % 4 {
-            0x0 => {
-                let carry_over = op_nib_1 + nib_1 + additional - 15;
-                if carry_over > 0 {
-                    regs[5] |= (1 << 5);
-                }
-                if op_nib_2 + nib_2 + carry_over >= 16 {
-                    regs[5] |= (1 << 4);
-                }
-                regs[0] = regs[0].wrapping_add(op_val);
-                regs[5] &= 0b10111111;
-                if carrying {
-                    code = "ADC A, ".to_string();
-                } else {
-                    code = "ADD A, ".to_string();
-                }
+        if nib_2 >= 0x8 {
+            if nib_1_mod != 0x3 {
+                additional += (regs[5] >> 4) & 1;
             }
-            0x1 => {
-                let carry_over = nib_1 - (op_nib_1 + additional);
-                if carry_over < 0 {
-                    regs[5] |= (1 << 5);
+            second_half = true;
+        }
+        if !second_half && nib_1_mod == 0x3 {
+            regs[0] |= op_val;
+            regs[5] &= 0b10001111;
+            code = "OR A, ".to_string();
+        } else {
+            match nib_1_mod {
+                0x0 => {
+                    let carry_over = op_nib_1 + nib_1 + additional - 15;
+                    if carry_over > 0 {
+                        regs[5] |= (1 << 5);
+                    }
+                    if op_nib_2 + nib_2 + carry_over >= 16 {
+                        regs[5] |= (1 << 4);
+                    }
+                    regs[0] = regs[0].wrapping_add(op_val);
+                    regs[5] &= 0b10111111;
+                    if second_half {
+                        code = "ADC A, ".to_string();
+                    } else {
+                        code = "ADD A, ".to_string();
+                    }
                 }
-                if nib_2 - op_nib_2 + carry_over < 0 {
-                    regs[5] |= (1 << 4);
+                0x1 | 0x3 => {
+                    let carry_over = nib_1 - (op_nib_1 + additional);
+                    if carry_over < 0 {
+                        regs[5] |= (1 << 5);
+                    }
+                    if nib_2 - op_nib_2 + carry_over < 0 {
+                        regs[5] |= (1 << 4);
+                    }
+                    if !second_half {
+                        regs[0] = regs[0].wrapping_sub(op_val);
+                    }
+                    regs[5] |= (1 << 6);
+                    if nib_1_mod == 0x1 {
+                        if second_half {
+                            code = "SBC A, ".to_string();
+                        } else {
+                            code = "SUB A, ".to_string();
+                        }
+                    } else {
+                        code = "CP A, ";
+                    }
                 }
-                regs[0] = regs[0].wrapping_sub(op_val);
-                regs[5] |= (1 << 6);
-                if carrying {
-                    code = "SBC A, ".to_string();
-                } else {
-                    code = "SUB A, ".to_string();
+                0x2 => {
+                    if second_half {
+                        regs[0] ^= op_val;
+                        regs[5] &= 0b10001111;
+                        code = "XOR A, ".to_string();
+                    } else {
+                        regs[0] &= op_val;
+                        regs[5] &= 0b10101111;
+                        code = "AND A, ".to_string();
+                    }
                 }
             }
         }
