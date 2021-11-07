@@ -591,7 +591,7 @@ impl CentralProcessingUnit {
     }
     fn ld_hl_addr_reg(&mut self) -> String {
         let memory = memory_mut.lock().unwrap();
-        let byte = *memory[pc];
+        let byte = *memory[self.pc];
         let nib_1 = byte >> 4;
         let nib_2 = byte & 0b1111;
         let addr = (self.regs[7] << 8) + self.regs[8];
@@ -620,5 +620,108 @@ impl CentralProcessingUnit {
     fn halt(&self) -> String {
         "HALT"
     }
-}
+    fn add_sub_a(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let byte = *memory[self.pc];
+        let nib_1 = byte >> 4;
+        let nib_2 = byte & 0b1111;
+        let mut op_val = 0;
+        let mut code_val = ""
+        if nib_1 <= 0xB {
+            op_val = match nib_2 % 8 {
+                0x0 => {
+
+                    code_val = "B".to_string();
+                    regs[1]
+                }
+                0x1 => {
+
+                    code_val = "C".to_string();
+                    regs[2]
+                }
+                0x2 => {
+
+                    code_val = "D".to_string();
+                    regs[3]
+                }
+                0x3 => {
+
+                    code_val = "E".to_string();
+                    regs[4]
+                }
+                0x4 => {
+
+                    code_val = "H".to_string();
+                    regs[7]
+                }
+                0x5 => {
+
+                    code_val = "L".to_string();
+                    regs[8]
+                }
+                0x6 => {
+                    addr = (self.regs[7] << 8) + self.regs[8]
+
+                    code_val = format!("({:X})".to_string());
+                    *memory[addr]
+                }
+                0x7 => {
+                    code_val = "A".to_string();
+                    regs[0]
+                }
+            }
+        } else {
+            op_val = *memory[self.pc + 1];
+            code_val = format!("{:X}".to_string());
+        }
+        let op_nib_1 = byte >> 4;
+        let op_nib_2 = byte & 0b1111;
+        let mut additional = 0;
+        let nib_1_mod = (nib_1-0x8) % 4
+        let mut carrying = false;
+        let mut code = "";
+        if nib_2_mod >= 0x8 {
+            additional += (regs[5] >> 4) & 1;
+            carrying = true;
+        }
+        match (nib_1-0x8) % 4 {
+            0x0 => {
+                let carry_over = op_nib_1 + nib_1 + additional - 15;
+                if carry_over > 0 {
+                    regs[5] |= (1 << 5);
+                }
+                if op_nib_2 + nib_2 + carry_over >= 16 {
+                    regs[5] |= (1 << 4);
+                }
+                regs[0] = regs[0].wrapping_add(op_val);
+                regs[5] &= 0b10111111;
+                if carrying {
+                    code = "ADC A, ".to_string();
+                } else {
+                    code = "ADD A, ".to_string();
+                }
+            }
+            0x1 => {
+                let carry_over = nib_1 - (op_nib_1 + additional);
+                if carry_over < 0 {
+                    regs[5] |= (1 << 5);
+                }
+                if nib_2 - op_nib_2 + carry_over < 0 {
+                    regs[5] |= (1 << 4);
+                }
+                regs[0] = regs[0].wrapping_sub(op_val);
+                regs[5] |= (1 << 6);
+                if carrying {
+                    code = "SBC A, ".to_string();
+                } else {
+                    code = "SUB A, ".to_string();
+                }
+            }
+        }
+        if regs[0] == 0 {
+            regs[5] |= (1 << 7);
+        }
+        code.push_str(&code_val);
+        code
+    }
 }
