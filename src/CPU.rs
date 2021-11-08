@@ -21,8 +21,9 @@ impl CentralProcessingUnit {
             'H'.to_string(),
             'L'.to_string(),
         ]
-        let pc = 0x100;
-        let sp = 0xFFFE;
+        let mut pc = 0x100;
+        let mut sp = 0xFFFE;
+        let mut interrupts_enable = false;
         CentralProcessingUnit {
             regs,
             reg_letter_map,
@@ -748,5 +749,44 @@ impl CentralProcessingUnit {
         }
         code.push_str(&code_val);
         code
+    }
+    fn ret(&mut self) -> String {
+        let z_flag = regs[5] >> 7;
+        let c_flag = (regs[5] >> 5) & 1;
+        let memory = memory_mut.lock().unwrap();
+        let command = *memory[self.pc];
+        let byte_1 = *memory[self.sp];
+        let byte_2 = *memory[self.sp - 1];
+        addr = (byte_2 << 8) + byte_1;
+        self.sp -= 2;
+        match command {
+            0xC0 => {
+                if !z_flag {
+                    self.pc = addr;
+                }
+            }
+            0xD0 => {
+                if !c_flag {
+                    self.pc = addr;
+                }
+            }
+            0xC8 => {
+                if z_flag {
+                    self.pc = addr;
+                }
+            }
+            0xD8 => {
+                if c_flag {
+                    self.pc = addr;
+                }
+            }
+            0xC9 => {
+                self.pc = addr;
+            }
+            0xD9 => {
+                self.pc = addr;
+                interrupts_enable = true;
+            }
+        }
     }
 }
