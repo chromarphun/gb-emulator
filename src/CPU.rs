@@ -44,8 +44,14 @@ impl CentralProcessingUnit {
             memory_mut,
         }
     }
-    fn get_af(&self) -> u16 {
-        (self.regs[REG_A] << 8) + (self.z_flag << 7) + (self.n_flag << 6) + (self.h_flag << 5) + (self.c_flag << 4)
+    fn get_f(&self) -> u16 {
+        (self.z_flag << 7) + (self.n_flag << 6) + (self.h_flag << 5) + (self.c_flag << 4)
+    }
+    fn write_f(&mut self, val: u8) {
+        self.z_flag = (val >> 7) & 1;
+        self.n_flag = (val >> 6) & 1;
+        self.h_flag = (val >> 5) & 1;
+        self.c_flag = (val >> 4) & 1;
     }
     fn nop(&mut self) -> String {
         self.pc += 1
@@ -690,6 +696,7 @@ impl CentralProcessingUnit {
             }
         } else {
             op_val = *memory[self.pc + 1];
+            self.pc += 1;
             code_val = format!("{:X}".to_string());
         }
         let op_nib_1 = op_val >> 4;
@@ -769,6 +776,7 @@ impl CentralProcessingUnit {
         if regs[REG_A] == 0 {
             self.z_flag = 1;
         }
+        self.pc +=1;
         code.push_str(&code_val);
         code
     }
@@ -778,26 +786,31 @@ impl CentralProcessingUnit {
         let byte_1 = *memory[self.sp];
         let byte_2 = *memory[self.sp - 1];
         addr = (byte_2 << 8) + byte_1;
+        let mut code = "RET ".to_string()
         self.sp -= 2;
         match command {
             0xC0 => {
                 if !self.z_flag {
                     self.pc = addr;
+                    code.push_str("NZ");
                 }
             }
             0xD0 => {
                 if !self.c_flag {
                     self.pc = addr;
+                    code.push_str("NC");
                 }
             }
             0xC8 => {
                 if self.z_flag {
                     self.pc = addr;
+                    code.push_str("Z");
                 }
             }
             0xD8 => {
                 if self.c_flag {
                     self.pc = addr;
+                    code.push_str("C");
                 }
             }
             0xC9 => {
@@ -808,5 +821,73 @@ impl CentralProcessingUnit {
                 interrupts_enable = true;
             }
         }
+        self.pc += 1;
+        code
+    }
+    fn pop(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let command = *memory[self.pc];
+        let low_val = *memory[self.sp];
+        let high_val = *memory[self.sp + 1];
+        let mut code = "POP ".to_string()
+        self.sp += 2;
+        match command {
+            0xC2 => {
+                self.regs[REG_C] = low_val;
+                self.regs[REG_B] = high_val;
+                code.push_str("BC");
+            }
+            0xD2 => {
+                self.regs[REG_E] = low_val;
+                self.regs[REG_D] = high_val;
+                code.push_str("DE");
+            }
+            0xE2 => {
+                self.regs[REG_L] = low_val;
+                self.regs[REG_H] = high_val;
+                code.push_str("HL");
+            }
+            0xF2 => {
+                self.write_f(low_val);
+                self.regs[REG_A] = high_val;
+                code.push_str("AF");
+            }
+        }
+        code
+        self.pc += 1;
+    }
+    fn push(&mut self) -> String {
+        let memory = memory_mut.lock().unwrap();
+        let command = *memory[self.pc];
+        let mut low_val = 0;
+        let mut high_val = 0;
+        let mut code = "PUSH ".to_string()
+        match command {
+            0xC2 => {
+                low_val = self.regs[REG_C];
+                high_val = self.regs[REG_B];
+                code.push_str("BC");
+            }
+            0xD2 => {
+                low_val = self.regs[REG_E];
+                high_val = self.regs[REG_D];
+                code.push_str("DE");
+            }
+            0xE2 => {
+                low_val = self.regs[REG_L];
+                high_val = self.regs[REG_H];
+                code.push_str("HL");
+            }
+            0xF2 => {
+                low_val = self.get_f();
+                high_val = self.regs[REG_A];
+                code.push_str("AF");
+            }
+        }
+        *memory[self.sp] = high_val;
+        *memory[self.sp - 1] = low_val;
+        self.sp += 2;
+        self.pc += 1;
+        code
     }
 }
