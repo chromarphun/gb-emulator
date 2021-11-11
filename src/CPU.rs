@@ -9,7 +9,7 @@ const REG_L: u8 = 6;
 
 pub struct CentralProcessingUnit {
     regs: [u8; 7],
-    reg_letter_map = [String; 7],
+    reg_letter_map: [String; 7],
     pc: u16,
     sp: u16,
     z_flag: u8,
@@ -23,7 +23,7 @@ pub struct CentralProcessingUnit {
 impl CentralProcessingUnit {
 
     pub fn new(memory_mut: Arc<Mutex<[u8; 65536]>>) -> CentralProcessingUnit {
-        regs: [0u8; 7];
+        regs = [0u8; 7];
         reg_letter_map = [
             'A'.to_string(),
             'B'.to_string(),
@@ -32,16 +32,26 @@ impl CentralProcessingUnit {
             'E'.to_string(),
             'H'.to_string(),
             'L'.to_string(),
-        ]
-        let mut pc = 0x100;
-        let mut sp = 0xFFFE;
-        let mut interrupts_enable = false;
+        ];
+        let mut pc: u16 = 0x100;
+        let mut sp: u16 = 0xFFFE;
+        let mut interrupts_enable: bool = false;
+        let mut z_flag: u8 =0;
+        let mut n_flag: u8 =0;
+        let mut h_flag: u8 =0;
+        let mut c_flag: u8 =0;
+        let function_map = [|| "test".to_string(); 256];
         CentralProcessingUnit {
             regs,
             reg_letter_map,
             pc,
             sp,
+            z_flag,
+            n_flag,
+            h_flag,
+            c_flag,
             memory_mut,
+            function_map
         }
     }
     fn get_f(&self) -> u16 {
@@ -54,7 +64,7 @@ impl CentralProcessingUnit {
         self.c_flag = (val >> 4) & 1;
     }
     fn nop(&mut self) -> String {
-        self.pc += 1
+        self.pc += 1;
         "NOP".to_string()
     }
     fn ld_reg_16(&mut self) -> String {
@@ -62,7 +72,7 @@ impl CentralProcessingUnit {
         let byte_1 = *memory[pc];
         let byte_2 = *memory[pc+1];
         let byte_3 = *memory[pc+2];
-        let code = "LD ".to_string()
+        let code = "LD ".to_string();
         match byte_1 {
             0x01 => {
                 self.regs[REG_B] = byte_2;
@@ -94,7 +104,7 @@ impl CentralProcessingUnit {
         let memory = memory_mut.lock().unwrap();
         let byte = *memory[pc];
         let mut addr: u16 = 0;
-        let code = "LD ".to_string()
+        let code = "LD ".to_string();
         match byte {
             0x02 => {
                 addr = (self.regs[REG_B] << 8) + self.regs[REG_C];
@@ -129,7 +139,7 @@ impl CentralProcessingUnit {
     fn inc_reg_16(&mut self) -> String {
         let memory = memory_mut.lock().unwrap();
         let byte = *memory[self.pc];
-        let code = "INC ".to_string()
+        let code = "INC ".to_string();
         if byte_1 == 0x33 {
             self.sp.wrapping_add(1);
             code.push_str("SP");
@@ -288,7 +298,7 @@ impl CentralProcessingUnit {
         let memory = memory_mut.lock().unwrap();
         let byte_1 = *memory[pc];
         let byte_2 = *memory[pc+1];
-        let code = "LD ".to_string()
+        let code = "LD ".to_string();
         match byte_1 {
             0x06 => {
                 self.regs[REG_B] = byte_2;
@@ -370,7 +380,7 @@ impl CentralProcessingUnit {
     fn scf(&mut self) -> String {
         self.n_flag = 0;
         self.h_flag = 0;
-        self.c_flag = 1
+        self.c_flag = 1;
         self.pc += 1;
         "SCF".to_string()
     }
@@ -390,8 +400,8 @@ impl CentralProcessingUnit {
         let memory = memory_mut.lock().unwrap();
         let byte_1 = *memory[pc];
         let add = *memory[pc + 1] as i8;
-        let mut condition: = false;
-        let code = "JR ".to_string()
+        let mut condition = false;
+        let code = "JR ".to_string();
         match byte_2 {
             0x18 => {
                 condition = true;
@@ -424,7 +434,7 @@ impl CentralProcessingUnit {
         let memory = memory_mut.lock().unwrap();
         let byte = *memory[pc];
         let mut addr: u16 = 0;
-        let code = "LD A".to_string()
+        let code = "LD A".to_string();
         match byte {
             0x0A => {
                 addr = (self.regs[REG_B] << 8) + self.regs[REG_C];
@@ -459,7 +469,7 @@ impl CentralProcessingUnit {
     fn dec_reg_16(&mut self) -> String {
         let memory = memory_mut.lock().unwrap();
         let byte = *memory[self.pc];
-        let code = "DEC ".to_string()
+        let code = "DEC ".to_string();
         if byte_1 == 0x3B {
             self.sp.wrapping_sub(1);
             code.push_str("SP");
@@ -479,7 +489,7 @@ impl CentralProcessingUnit {
                 }
                 0x2B => {
                     r_low = self.regs[REG_L];
-                    r_high = self.regs[REG_H;
+                    r_high = self.regs[REG_H];
                     code.push_str("HL");
                 }
             }
@@ -525,7 +535,7 @@ impl CentralProcessingUnit {
         self.n_flag = 0;
         self.h_flag = 0;
         regs[REG_A] = !regs[REG_A];
-        "CPL".to_string();
+        "CPL".to_string()
     }
     fn ccf(&mut self) -> String {
         if self.c_flag == 1 {
@@ -536,7 +546,7 @@ impl CentralProcessingUnit {
         }
         self.n_flag = 0;
         self.h_flag = 0;
-        "CCF".to_string();
+        "CCF".to_string()
     }
     fn ld_reg_reg(&mut self) -> String {
         let memory = memory_mut.lock().unwrap();
@@ -545,7 +555,7 @@ impl CentralProcessingUnit {
         let nib_2 = byte & 0b1111;
         let reg_1 = 0;
         let reg_2 = 1;
-        let mut code = "LD ".to_string()
+        let mut code = "LD ".to_string();
         match nib_1 {
             0x4 => {
                 if nib_2 <= 0x7 {
@@ -592,7 +602,7 @@ impl CentralProcessingUnit {
         let nib_2 = byte & 0b1111;
         let addr = (self.regs[REG_H] << 8) + self.regs[REG_L];
         let mut reg = 0;
-        let mut code = "LD ".to_string()
+        let mut code = "LD ".to_string();
         if nib_2 == 6 {
             match nib_1 {
                 0x4 => reg = REG_B,
@@ -620,7 +630,7 @@ impl CentralProcessingUnit {
         let nib_2 = byte & 0b1111;
         let addr = (self.regs[REG_H] << 8) + self.regs[REG_L];
         let mut reg = 0;
-        let mut code = "LD ".to_string()
+        let mut code = "LD ".to_string();
         if nib_2 == 6 {
             match nib_1 {
                 0x4 => reg = REG_B,
@@ -650,7 +660,7 @@ impl CentralProcessingUnit {
         let nib_1 = byte >> 4;
         let nib_2 = byte & 0b1111;
         let mut op_val = 0;
-        let mut code_val = ""
+        let mut code_val = "";
         if nib_1 <= 0xB {
             op_val = match nib_2 % 8 {
                 0x0 => {
@@ -684,7 +694,7 @@ impl CentralProcessingUnit {
                     regs[REG_L]
                 }
                 0x6 => {
-                    addr = (self.regs[REG_H] << 8) + self.regs[REG_L]
+                    addr = (self.regs[REG_H] << 8) + self.regs[REG_L];
 
                     code_val = format!("({:X})".to_string());
                     *memory[addr]
@@ -702,7 +712,7 @@ impl CentralProcessingUnit {
         let op_nib_1 = op_val >> 4;
         let op_nib_2 = op_val & 0b1111;
         let mut additional = 0;
-        let nib_1_mod = (nib_1-0x8) % 4
+        let nib_1_mod = (nib_1-0x8) % 4;
         let mut second_half = false;
         let mut code = "";
         if nib_2 >= 0x8 {
@@ -786,7 +796,7 @@ impl CentralProcessingUnit {
         let byte_1 = *memory[self.sp];
         let byte_2 = *memory[self.sp - 1];
         addr = (byte_2 << 8) + byte_1;
-        let mut code = "RET ".to_string()
+        let mut code = "RET ".to_string();
         self.sp -= 2;
         match command {
             0xC0 => {
@@ -829,7 +839,7 @@ impl CentralProcessingUnit {
         let command = *memory[self.pc];
         let low_val = *memory[self.sp];
         let high_val = *memory[self.sp + 1];
-        let mut code = "POP ".to_string()
+        let mut code = "POP ".to_string();
         self.sp += 2;
         match command {
             0xC2 => {
@@ -853,15 +863,15 @@ impl CentralProcessingUnit {
                 code.push_str("AF");
             }
         }
-        code
         self.pc += 1;
+        code
     }
     fn push(&mut self) -> String {
         let memory = memory_mut.lock().unwrap();
         let command = *memory[self.pc];
         let mut low_val = 0;
         let mut high_val = 0;
-        let mut code = "PUSH ".to_string()
+        let mut code = "PUSH ".to_string();
         match command {
             0xC2 => {
                 low_val = self.regs[REG_C];
