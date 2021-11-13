@@ -1,10 +1,10 @@
-const REG_A: u8 = 0;
-const REG_B: u8 = 1;
-const REG_C: u8 = 2;
-const REG_D: u8 = 3;
-const REG_E: u8 = 4;
-const REG_H: u8 = 5;
-const REG_L: u8 = 6;
+const REG_A: usize = 0;
+const REG_B: usize = 1;
+const REG_C: usize = 2;
+const REG_D: usize = 3;
+const REG_E: usize = 4;
+const REG_H: usize = 5;
+const REG_L: usize = 6;
 const CARRY_LIMIT: u8 = 255;
 
 pub struct CentralProcessingUnit {
@@ -179,7 +179,6 @@ impl CentralProcessingUnit {
             }
             0xEA => {
                 addr = (adding_1 << 8) + adding_2;
-
                 (format!("LD ({:X}) A", addr), addr);
                 self.pc += 2;
             }
@@ -190,32 +189,24 @@ impl CentralProcessingUnit {
         code
     }
     fn inc_reg_16(&mut self) -> String {
-        let memory = memory_mut.lock().unwrap();
-        let byte = *memory[self.pc];
-        let code = "INC ".to_string();
-        if byte_1 == 0x33 {
+        let [command, _, _, _ ] =self.get_memory(self.pc, 1);
+        let code = if command == 0x33 {
             self.sp.wrapping_add(1);
-            code.push_str("SP");
+            "INC rSP".to_string()
         } else {
             let mut r_low: usize = 9;
             let mut r_high: usize = 9;
-            match byte_1  {
+            let (r_low, r_high, code) = match command  {
                 0x03 => {
-                    r_low = REG_C;
-                    r_high = REG_B;
-                    code.push_str("BC");
+                    (REG_C, REG_B, "INC rBC".to_string())
                 }
                 0x13 => {
-                    r_low = REG_E;
-                    r_high = REG_D;
-                    code.push_str("DE");
+                    (REG_E, REG_D, "INC rDE".to_string())
                 }
                 0x23 => {
-                    r_low = REG_L;
-                    r_high = REG_H;
-                    code.push_str("HL");
+                    (REG_L, REG_H, "INC rHL".to_string())
                 }
-            }
+            };
             if self.regs[r_low] != 0xFF {
                 self.regs[r_low] += 1;
             } else {
@@ -227,123 +218,100 @@ impl CentralProcessingUnit {
                     self.regs[r_low] = 0
                 }
             }
-        }
+            code
+        };
         self.pc += 1;
         code
     }
     fn inc_reg_8(&mut self) -> String {
-        let memory = memory_mut.lock().unwrap();
-        let byte = *memory[self.pc];
-        let code = "INC ".to_string();
+        let [command, _, _, _ ] =self.get_memory(self.pc, 1);
         let val: u8 = 0;
-        match byte {
+        let (code , val) = match command {
             0x04 => {
-                self.regs[REG_B].wrapping_add(1);
-                let val = self.regs[REG_B];
-                code.push_str("B");
+                self.regs[REG_B] = self.regs[REG_B].wrapping_add(1);
+                ("INC rB".to_string(), self.regs[REG_B])
             }
             0x14 => {
-                self.regs[REG_D].wrapping_add(1);
-                let val = self.regs[REG_D];
-                code.push_str("D");
+                self.regs[REG_D] = self.regs[REG_D].wrapping_add(1);
+                ("INC rD".to_string(), self.regs[REG_D])
             }
             0x24 => {
-                self.regs[REG_H].wrapping_add(1);
-                let val = self.regs[REG_H];
-                code.push_str("H");
+                self.regs[REG_H] = self.regs[REG_H].wrapping_add(1);
+                ("INC rH".to_string(), self.regs[REG_H])
             }
             0x34 => {
                 let addr: u16 = (self.regs[REG_H] << 8) + self.regs[REG_L];
-                *memory[addr].wrapping_add(1);
-                let val = *memory[addr];
-                code.push_str("(HL)");
+                let [mut val, _, _, _ ] = self.get_memory(addr, 1);
+                val = val.wrapping_add(1);
+                self.write_memory(addr, [val, 0, 0, 0], 1);
+                ("INC (rHL)".to_string(), val)
             }
             0x0C => {
                 self.regs[REG_C].wrapping_add(1);
-                let val = self.regs[REG_C];
-                code.push_str("C");
+                ("INC rC".to_string(), self.regs[REG_C])
             }
             0x1C => {
                 self.regs[REG_E].wrapping_add(1);
-                let val = self.regs[REG_E];
-                code.push_str("E");
+                ("INC rE".to_string(), self.regs[REG_E])
             }
             0x2C => {
                 self.regs[REG_L].wrapping_add(1);
-                let val = self.regs[REG_L];
-                code.push_str("L");
+                ("INC rL".to_string(), self.regs[REG_L])
             }
             0x3C => {
                 self.regs[REG_A].wrapping_add(1);
-                let val = self.regs[REG_A];
-                code.push_str("A");
+                ("INC rA".to_string(), self.regs[REG_A])
             }
-        }
-        if val == 0 {
-            self.z_flag = 1;
-        }
+        };
+        self.z_flag = if val == 0 {1} else {0};
+        self.h_flag = if (val & 0xF) == 0 {1} else {0};
         self.n_flag = 0;
-        if (val & 0b00001111) == 0 {
-            self.h_flag = 1;
-        }
         self.pc += 1;
         code
     }
     fn dec_reg_8(&mut self) -> String {
-        let memory = memory_mut.lock().unwrap();
-        let byte = *memory[self.pc];
-        let code = "INC ".to_string();
+        let [command, _, _, _ ] =self.get_memory(self.pc, 1);
         let val: u8 = 0;
-        match byte {
-            0x05 => {
-                self.regs[REG_B].wrapping_sub(1);
-                let val = self.regs[REG_B];
-                code.push_str("B");
+        let (code , val) = match command {
+            0x04 => {
+                self.regs[REG_B] = self.regs[REG_B].wrapping_sub(1);
+                ("DEC rB".to_string(), self.regs[REG_B])
             }
-            0x15 => {
-                self.regs[REG_D].wrapping_sub(1);
-                let val = self.regs[REG_D];
-                code.push_str("D");
+            0x14 => {
+                self.regs[REG_D] = self.regs[REG_D].wrapping_sub(1);
+                ("DEC rD".to_string(), self.regs[REG_D])
             }
-            0x25 => {
-                self.regs[REG_H].wrapping_sub(1);
-                let val = self.regs[REG_H];
-                code.push_str("H");
+            0x24 => {
+                self.regs[REG_H] = self.regs[REG_H].wrapping_sub(1);
+                ("DEC rH".to_string(), self.regs[REG_H])
             }
-            0x35 => {
+            0x34 => {
                 let addr: u16 = (self.regs[REG_H] << 8) + self.regs[REG_L];
-                *memory[addr].wrapping_sub(1);
-                let val = *memory[addr];
-                code.push_str("(HL)");
+                let [mut val, _, _, _ ] = self.get_memory(addr, 1);
+                val = val.wrapping_sub(1);
+                self.write_memory(addr, [val, 0, 0, 0], 1);
+                ("DEC (rHL)".to_string(), val)
             }
-            0x0D => {
+            0x0C => {
                 self.regs[REG_C].wrapping_sub(1);
-                let val = self.regs[REG_C];
-                code.push_str("C");
+                ("DEC rC".to_string(), self.regs[REG_C])
             }
-            0x1D => {
+            0x1C => {
                 self.regs[REG_E].wrapping_sub(1);
-                let val = self.regs[REG_E];
-                code.push_str("E");
+                ("DEC rE".to_string(), self.regs[REG_E])
             }
-            0x2D => {
+            0x2C => {
                 self.regs[REG_L].wrapping_sub(1);
-                let val = self.regs[REG_L];
-                code.push_str("L");
+                ("DEC rL".to_string(), self.regs[REG_L])
             }
-            0x3D => {
+            0x3C => {
                 self.regs[REG_A].wrapping_sub(1);
-                let val = self.regs[REG_A];
-                code.push_str("A");
+                ("DEC rA".to_string(), self.regs[REG_A])
             }
-        }
-        if val == 0 {
-            self.z_flag = 1;
-        }
-        self.n_flag = 0;
-        if (val & 0b00001111) == 0b1111 {
-            self.h_flag = 0;
-        }
+        };
+        self.z_flag = if val == 0 {1} else {0};
+        self.h_flag = if (val & 0xF) == 0xF {1} else {0};
+        self.n_flag = 1;
         self.pc += 1;
         code
     }
