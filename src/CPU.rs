@@ -182,6 +182,7 @@ impl CentralProcessingUnit {
                 (format!("LD ({:X}) A", addr), addr);
                 self.pc += 2;
             }
+            _ => panic!("{}", format!("Unrecognized command {:X} at ld_reg_addr_a!", command))
         };
         self.write_memory(addr, [self.regs[REG_A], 0, 0, 0], 1);
 
@@ -206,6 +207,7 @@ impl CentralProcessingUnit {
                 0x23 => {
                     (REG_L, REG_H, "INC rHL".to_string())
                 }
+                _ => panic!("{}", format!("Unrecognized command {:X} at inc_reg_16!", command))
             };
             if self.regs[r_low] != 0xFF {
                 self.regs[r_low] += 1;
@@ -262,6 +264,7 @@ impl CentralProcessingUnit {
                 self.regs[REG_A].wrapping_add(1);
                 ("INC rA".to_string(), self.regs[REG_A])
             }
+            _ => panic!("{}", format!("Unrecognized command {:X} at inc_reg_8!", command))
         };
         self.z_flag = if val == 0 {1} else {0};
         self.h_flag = if (val & 0xF) == 0 {1} else {0};
@@ -273,41 +276,42 @@ impl CentralProcessingUnit {
         let [command, _, _, _ ] =self.get_memory(self.pc, 1);
         let val: u8 = 0;
         let (code , val) = match command {
-            0x04 => {
+            0x05 => {
                 self.regs[REG_B] = self.regs[REG_B].wrapping_sub(1);
                 ("DEC rB".to_string(), self.regs[REG_B])
             }
-            0x14 => {
+            0x15 => {
                 self.regs[REG_D] = self.regs[REG_D].wrapping_sub(1);
                 ("DEC rD".to_string(), self.regs[REG_D])
             }
-            0x24 => {
+            0x25 => {
                 self.regs[REG_H] = self.regs[REG_H].wrapping_sub(1);
                 ("DEC rH".to_string(), self.regs[REG_H])
             }
-            0x34 => {
+            0x35 => {
                 let addr: u16 = (self.regs[REG_H] << 8) + self.regs[REG_L];
                 let [mut val, _, _, _ ] = self.get_memory(addr, 1);
                 val = val.wrapping_sub(1);
                 self.write_memory(addr, [val, 0, 0, 0], 1);
                 ("DEC (rHL)".to_string(), val)
             }
-            0x0C => {
+            0x0D => {
                 self.regs[REG_C].wrapping_sub(1);
                 ("DEC rC".to_string(), self.regs[REG_C])
             }
-            0x1C => {
+            0x1D => {
                 self.regs[REG_E].wrapping_sub(1);
                 ("DEC rE".to_string(), self.regs[REG_E])
             }
-            0x2C => {
+            0x2D => {
                 self.regs[REG_L].wrapping_sub(1);
                 ("DEC rL".to_string(), self.regs[REG_L])
             }
-            0x3C => {
+            0x3D => {
                 self.regs[REG_A].wrapping_sub(1);
                 ("DEC rA".to_string(), self.regs[REG_A])
             }
+            _ => panic!("{}", format!("Unrecognized command {:X} at dec_reg_8!", command))
         };
         self.z_flag = if val == 0 {1} else {0};
         self.h_flag = if (val & 0xF) == 0xF {1} else {0};
@@ -316,46 +320,43 @@ impl CentralProcessingUnit {
         code
     }
     fn ld_reg_8(&mut self) -> String {
-        let memory = memory_mut.lock().unwrap();
-        let byte_1 = *memory[pc];
-        let byte_2 = *memory[pc+1];
-        let code = "LD ".to_string();
-        match byte_1 {
+        let [command, to_load, _, _ ] =self.get_memory(self.pc, 2);
+        let code = match command {
             0x06 => {
-                self.regs[REG_B] = byte_2;
-                code.push_str("B ");
+                self.regs[REG_B] = to_load;
+                format!("LD rB {:X}", to_load)
             },
             0x16 => {
-                self.regs[REG_D] = byte_2;
-                code.push_str("D ");
+                self.regs[REG_D] = to_load;
+                format!("LD rD {:X}", to_load)
             }
             0x26 => {
-                self.regs[REG_H] = byte_2;
-                code.push_str("H ");
+                self.regs[REG_H] = to_load;
+                format!("LD rH {:X}", to_load)
             }
             0x36 => {
                 let addr: u16 = (self.regs[REG_H] << 8) + self.regs[REG_L];
-                *memory[addr] = byte_2;
-                code.push_str("(HL) ");
+                self.write_memory(addr, [to_load, 0, 0, 0], 1);
+                format!("LD (rHL) {:X}", to_load)
             }
             0x0E => {
-                self.regs[REG_C] = byte_2;
-                code.push_str("C ");
-            },
+                self.regs[REG_C] = to_load;
+                format!("LD rC {:X}", to_load)
+            }
             0x1E => {
-                self.regs[REG_E] = byte_2;
-                code.push_str("E ");
-            },
+                self.regs[REG_E] = to_load;
+                format!("LD rE {:X}", to_load)
+            }
             0x2E => {
-                self.regs[REG_L] = byte_2;
-                code.push_str("L ");
-            },
+                self.regs[REG_L] = to_load;
+                format!("LD rL {:X}", to_load)
+            }
             0x3E => {
-                self.regs[REG_A] = byte_2;
-                code.push_str("A ");
-            },
-        }
-        code.push_str(&format!("{:X}", byte_2));
+                self.regs[REG_A] = to_load;
+                format!("LD rA {:X}", to_load)
+            }
+            _ => panic!("{}", format!("Unrecognized command {:X} at ld_reg_8!", command))
+        };
         self.pc += 2;
         code
     }
@@ -363,7 +364,6 @@ impl CentralProcessingUnit {
         let bit = self.regs[REG_A] >> 7;
         self.regs[REG_A] <<= 1;
         self.regs[REG_A] += bit;
-        regs[5] &= 0b00011111;
         self.z_flag = 0;
         self.n_flag = 0;
         self.h_flag = 0;
@@ -406,130 +406,102 @@ impl CentralProcessingUnit {
         "SCF".to_string()
     }
     fn ld_addr_sp(&mut self) -> String {
-        let memory = memory_mut.lock().unwrap();
-        let addr = (self.pc + 1 << 8) + self.pc
-        *memory[addr] = self.sp & 0xFF;
-        *memory[addr + 1] = self.sp >> 4;
-        let mut code = "LD ".to_string();
-        code.push_str("(");
-        code.push_str(&format!("{:X}", addr));
-        code.push_str(") SP");
-        self.pc += 2;
-        code
+        let [command, addr_low, addr_high, _ ] =self.get_memory(self.pc, 3);
+        let addr = (addr_high << 8) + addr_low;
+        let (high_sp, low_sp) = split_16(self.sp);
+        self.write_memory(addr, [low_sp, high_sp, 0, 0], 2);
+        self.pc += 3;
+        format!("LD ({:X}) rSP", addr)
     }
     fn jr(&mut self) -> String {
-        let memory = memory_mut.lock().unwrap();
-        let byte_1 = *memory[pc];
-        let add = *memory[pc + 1] as i8;
-        let mut condition = false;
-        let code = "JR ".to_string();
-        match byte_2 {
+        let [command, add, _, _] = self.get_memory(self.pc, 2);
+        let (code, condition) = match byte_2 {
             0x18 => {
-                condition = true;
-
+                ("JR".to_striong(), true)
             },
             0x20 => {
-                condition = ((self.z_flag) == 0);
-                code.push_str("NZ ");
+                ("JR NZ".to_string(), self.z_flag == 0)
             },
             0x28 => {
-                condition = ((self.z_flag) == 1);
-                code.push_str("Z ");
+                ("JR Z".to_string(), self.z_flag == 1)
             },
             0x30 => {
-                condition = ((self.c_flag) == 0);
-                code.push_str("NC ");
+                ("JR NC".to_string(), self.c_flag == 0)
             },
             0x38 => {
-                condition = ((self.c_flag) == 1);
-                code.push_str("C ");
-            },
-        }
-        code.push_str(&format!("{:X}", add));
+                ("JR C".to_string(), self.c_flag == 1)
+            }
+        };
         if condition {
-            self.pc = self.pc.wrapping_add(add as u16);
+            self.pc = self.pc.wrapping_add((add as i8) as u16);
         }
         code
     }
     fn ld_a_reg_addr(&mut self) -> String {
-        let memory = memory_mut.lock().unwrap();
-        let byte = *memory[pc];
-        let mut addr: u16 = 0;
-        let code = "LD A".to_string();
-        match byte {
+        let [command, addr_low, addr_high, _] = self.get_memory(self.pc, 3);
+        let (code, addr) = match command {
             0x0A => {
-                addr = (self.regs[REG_B] << 8) + self.regs[REG_C];
-                code.push_str("(BC)");
-
+                ("LD A (BC)".to_string(), (self.regs[REG_B] << 8) + self.regs[REG_C])
             }
             0x1A => {
-                addr = (self.regs[REG_D] << 8) + self.regs[REG_E];
-                code.push_str("(DE)");
+                ("LD A (DE)".to_string(), (self.regs[REG_D] << 8) + self.regs[REG_E])
             }
             0x2A => {
-                let HL: u16 = (self.regs[REG_H] << 8) + self.regs[REG_L];
-                addr = HL;
-                HL.wrapping_add(1);
-                self.regs[REG_L] = HL & 0b11111111;
-                self.regs[REG_H] = HL >> 8;
-                code.push_str("(HL +)");
+                let hl: u16 = (self.regs[REG_H] << 8) + self.regs[REG_L];
+                addr = hl;
+                hl = hl.wrapping_add(1);
+                (H_new, L_new) = split_16(hl);
+                self.regs[REG_L] = L_new;
+                self.regs[REG_H] = H_new;
+                code.push_str("LD A (HL +)".to_string(), addr);
             }
             0x3A => {
-                let HL: u16 = (self.regs[REG_H] << 8) + self.regs[REG_L];
-                addr = HL;
-                HL.wrapping_sub(1);
-                self.regs[REG_L] = HL & 0b11111111;
-                self.regs[REG_H] = HL >> 8;
-                code.push_str("(HL -)");
+                let hl: u16 = (self.regs[REG_H] << 8) + self.regs[REG_L];
+                addr = hl;
+                hl = hl.wrapping_sub(1);
+                (H_new, L_new) = split_16(hl);
+                self.regs[REG_L] = L_new;
+                self.regs[REG_H] = H_new;
+                code.push_str("LD A (HL -)".to_string(), addr);
             }
             0xF0 => {
-                add = *memory[self.pc + 1];
-                addr = 0xFF00 + add;
                 self.pc += 1;
-                code.push_str(&format!("(FF00 + {:X})"), add);
+                (&format!("LD A (FF00 + {:X})", addr_low), 0xFF00 + addr_low)
             }
             0xF2 => {
-                addr = 0xFF00 + self.regs[REG_C];
-                self.pc  +=1;
-                code.push_str(&format!("(FF00 + C)"), addr);
+                code.push_str(&format!("LD A (FF00 + C)"), 0xFF00 + self.regs[REG_C]);
             }
             0xFA => {
-                addr = (*memory[self.pc + 1] << 8) + *memory[self.pc + 1];
-                self.pc  +=1;
-                code.push_str(&format!("({:X})"), addr);
+                addr = (addr_high << 8) + addr_low;
+                self.pc += 2;
+                (&format!("({:X})", addr), addr)
             }
-        }
-        self.regs[REG_A] = *memory[addr];
+        };
+        let [new_val, _, _, _] = self.get_memory(addr, 1);
+        self.regs[REG_A] = new_val;
         self.pc += 1;
         code
     }
     fn dec_reg_16(&mut self) -> String {
-        let memory = memory_mut.lock().unwrap();
-        let byte = *memory[self.pc];
-        let code = "DEC ".to_string();
-        if byte_1 == 0x3B {
-            self.sp.wrapping_sub(1);
-            code.push_str("SP");
+        let [command, _, _, _ ] =self.get_memory(self.pc, 1);
+        let code = if command == 0x3B {
+            self.sp.wrapping_add(1);
+            "DEC rSP".to_string()
         } else {
             let mut r_low: usize = 9;
             let mut r_high: usize = 9;
-            match byte_1  {
+            let (r_low, r_high, code) = match command  {
                 0x0B => {
-                    r_low = self.regs[REG_C];
-                    r_high = self.regs[REG_B];
-                    code.push_str("BC");
+                    (REG_C, REG_B, "DEC rBC".to_string())
                 }
                 0x1B => {
-                    r_low = self.regs[REG_E];
-                    r_high = self.regs[REG_D];
-                    code.push_str("DE");
+                    (REG_E, REG_D, "DEC rDE".to_string())
                 }
                 0x2B => {
-                    r_low = self.regs[REG_L];
-                    r_high = self.regs[REG_H];
-                    code.push_str("HL");
+                    (REG_L, REG_H, "DEC rHL".to_string())
                 }
-            }
+                _ => panic!("{}", format!("Unrecognized command {:X} at dec_reg_16!", command))
+            };
             if self.regs[r_low] != 0x00 {
                 self.regs[r_low] -= 1;
             } else {
@@ -541,7 +513,7 @@ impl CentralProcessingUnit {
                     self.regs[r_low] = 0xFF;
                 }
             }
-        }
+        };
         self.pc += 1;
         code
     }
@@ -575,62 +547,38 @@ impl CentralProcessingUnit {
         "CPL".to_string()
     }
     fn ccf(&mut self) -> String {
-        if self.c_flag == 1 {
-            self.c_flag = 0;
-
-        } else {
-            self.c_flag = 1;
-        }
+        self.c_flag = if self.c_flag == 1 {0} else {1};
         self.n_flag = 0;
         self.h_flag = 0;
         "CCF".to_string()
     }
     fn ld_reg_reg(&mut self) -> String {
-        let memory = memory_mut.lock().unwrap();
-        let byte = *memory[pc];
-        let nib_1 = byte >> 4;
-        let nib_2 = byte & 0b1111;
-        let reg_1 = 0;
-        let reg_2 = 1;
-        let mut code = "LD ".to_string();
-        match nib_1 {
+        let [command, _, _, _] = self.get_memory(self.pc, 1);
+        let (command_high, command_low) = split_byte(command);
+        let reg_1 = match command_high {
             0x4 => {
-                if nib_2 <= 0x7 {
-                    reg_1 = REG_A;
-                } else {
-                    reg_1 = REG_B;
-                }
+                if command_low <= 0x7 {REG_A} else {REG_B}
             }
             0x5 => {
-                if nib_2 <= 0x7 {
-                    reg_1 = REG_C;
-                } else {
-                    reg_1 = REG_D;
-                }
+                if command_low <= 0x7 {REG_C} else {REG_D}
             }
             0x6 => {
-                if nib_2 <= 0x7 {
-                    reg_1 = REG_H;
-                } else {
-                    reg_1 = REG_L;
-                }
+                if command_low <= 0x7 {REG_H} else {REG_L}
             }
-            0x7 => reg_1 = REG_L            
-        }
-        match nib_2 % 8 {
-            0x0 => reg_2 = REG_B,
-            0x1 => reg_2 = REG_C,
-            0x2 => reg_2 = REG_D,
-            0x3 => reg_2 = REG_E,
-            0x4 => reg_2 = REG_H,
-            0x5 => reg_2 = REG_L,
-            0x7 => reg_2 = REG_A,
-        }
+            0x7 => REG_A       
+        };
+        let reg_2 = match command_low % 8 {
+            0x0 => REG_B,
+            0x1 => REG_C,
+            0x2 => REG_D,
+            0x3 => REG_E,
+            0x4 => REG_H,
+            0x5 => REG_L,
+            0x7 => REG_A,
+        };
         self.regs[reg_1] = self.regs[regs_2];
-        code.push_str(&self.reg_letter_map[reg_1]);
-        code.push_str(' ');
-        code.push_str(&self.reg_letter_map[reg_2]);
-        code
+        self.pc += 1;
+        ("LD r{}, r{}", self.reg_letter_map[reg_1], self.reg_letter_map[reg_2])
     }
     fn ld_reg_hl_addr(&mut self) -> String {
         let memory = memory_mut.lock().unwrap();
