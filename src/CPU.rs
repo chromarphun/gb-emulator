@@ -23,10 +23,89 @@ fn split_byte(val: u8) -> (u8, u8) {
     (val >> 4, val & 0xF)
 }
 
-fn get_function_map() -> [fn(&mut CentralProcessingUnit) -> String; 12] {
-    [CentralProcessingUnit::nop, CentralProcessingUnit::ld_reg_16, CentralProcessingUnit::ld_reg_addr_a, CentralProcessingUnit::inc_reg_16,
-     CentralProcessingUnit::inc_reg_8, CentralProcessingUnit::dec_reg_8, CentralProcessingUnit::ld_reg_8, CentralProcessingUnit::rot_a_left_carry,
-     CentralProcessingUnit::ld_addr_sp, CentralProcessingUnit::add_hl_reg_16, CentralProcessingUnit::ld_a_reg_addr, CentralProcessingUnit::dec_reg_16,
+fn get_function_map() -> [fn(&mut CentralProcessingUnit) -> String; 256] {
+
+    [
+        //0x00
+        CentralProcessingUnit::nop, CentralProcessingUnit::ld_reg_16, CentralProcessingUnit::ld_addr_a, CentralProcessingUnit::inc_reg_16,
+        CentralProcessingUnit::inc_reg_8, CentralProcessingUnit::dec_reg_8, CentralProcessingUnit::ld_reg_8, CentralProcessingUnit::rot_a_left_carry,
+        CentralProcessingUnit::ld_addr_sp, CentralProcessingUnit::add_hl_reg_16, CentralProcessingUnit::ld_a_addr, CentralProcessingUnit::dec_reg_16,
+        CentralProcessingUnit::inc_reg_8, CentralProcessingUnit::dec_reg_8, CentralProcessingUnit::ld_reg_8, CentralProcessingUnit::rot_a_right_carry,
+        //0x10
+        CentralProcessingUnit::stop, CentralProcessingUnit::ld_reg_16, CentralProcessingUnit::ld_addr_a, CentralProcessingUnit::inc_reg_16,
+        CentralProcessingUnit::inc_reg_8, CentralProcessingUnit::dec_reg_8, CentralProcessingUnit::ld_reg_8, CentralProcessingUnit::rot_a_left,
+        CentralProcessingUnit::jr, CentralProcessingUnit::add_hl_reg_16, CentralProcessingUnit::ld_a_addr, CentralProcessingUnit::dec_reg_16,
+        CentralProcessingUnit::inc_reg_8, CentralProcessingUnit::dec_reg_8, CentralProcessingUnit::ld_reg_8, CentralProcessingUnit::rot_a_right,
+        //0x20
+        CentralProcessingUnit::jr, CentralProcessingUnit::ld_reg_16, CentralProcessingUnit::ld_addr_a, CentralProcessingUnit::inc_reg_16,
+        CentralProcessingUnit::inc_reg_8, CentralProcessingUnit::dec_reg_8, CentralProcessingUnit::ld_reg_8, CentralProcessingUnit::daa,
+        CentralProcessingUnit::jr, CentralProcessingUnit::add_hl_reg_16, CentralProcessingUnit::ld_a_addr, CentralProcessingUnit::dec_reg_16,
+        CentralProcessingUnit::inc_reg_8, CentralProcessingUnit::dec_reg_8, CentralProcessingUnit::ld_reg_8, CentralProcessingUnit::cpl,
+        //0x30
+        CentralProcessingUnit::jr, CentralProcessingUnit::ld_reg_16, CentralProcessingUnit::ld_addr_a, CentralProcessingUnit::inc_reg_16,
+        CentralProcessingUnit::inc_reg_8, CentralProcessingUnit::dec_reg_8, CentralProcessingUnit::ld_reg_8, CentralProcessingUnit::scf,
+        CentralProcessingUnit::jr, CentralProcessingUnit::add_hl_reg_16, CentralProcessingUnit::ld_a_addr, CentralProcessingUnit::dec_reg_16,
+        CentralProcessingUnit::inc_reg_8, CentralProcessingUnit::dec_reg_8, CentralProcessingUnit::ld_reg_8, CentralProcessingUnit::ccf,
+        //0x40
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, 
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_hl_addr, CentralProcessingUnit::ld_reg_reg,
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, 
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_hl_addr, CentralProcessingUnit::ld_reg_reg,
+        //0x50
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, 
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_hl_addr, CentralProcessingUnit::ld_reg_reg,
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, 
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_hl_addr, CentralProcessingUnit::ld_reg_reg,
+        //0x60
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, 
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_hl_addr, CentralProcessingUnit::ld_reg_reg,
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, 
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_hl_addr, CentralProcessingUnit::ld_reg_reg,
+        //0x70
+        CentralProcessingUnit::ld_hl_addr_reg, CentralProcessingUnit::ld_hl_addr_reg, CentralProcessingUnit::ld_hl_addr_reg, CentralProcessingUnit::ld_hl_addr_reg, 
+        CentralProcessingUnit::ld_hl_addr_reg, CentralProcessingUnit::ld_hl_addr_reg, CentralProcessingUnit::halt, CentralProcessingUnit::ld_hl_addr_reg,
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, 
+        CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_reg, CentralProcessingUnit::ld_reg_hl_addr, CentralProcessingUnit::ld_reg_reg,
+        //0x80
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, 
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        //0x90
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, 
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        //0xA0
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, 
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        //0xB0
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, 
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::arthimetic_a,
+        //0xC0
+        CentralProcessingUnit::ret, CentralProcessingUnit::pop, CentralProcessingUnit::jp, CentralProcessingUnit::jp, 
+        CentralProcessingUnit::call, CentralProcessingUnit::push, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::rst,
+        CentralProcessingUnit::ret, CentralProcessingUnit::ret, CentralProcessingUnit::jp, CentralProcessingUnit::nop,
+        CentralProcessingUnit::call, CentralProcessingUnit::call, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::rst,
+        //0xD0
+        CentralProcessingUnit::ret, CentralProcessingUnit::pop, CentralProcessingUnit::jp, CentralProcessingUnit::fail, 
+        CentralProcessingUnit::call, CentralProcessingUnit::push, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::rst,
+        CentralProcessingUnit::ret, CentralProcessingUnit::ret, CentralProcessingUnit::jp, CentralProcessingUnit::fail,
+        CentralProcessingUnit::call, CentralProcessingUnit::fail, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::rst,
+        //0xE0
+        CentralProcessingUnit::ld_addr_a, CentralProcessingUnit::pop, CentralProcessingUnit::ld_addr_a, CentralProcessingUnit::fail, 
+        CentralProcessingUnit::fail, CentralProcessingUnit::push, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::rst,
+        CentralProcessingUnit::add_sp_i8, CentralProcessingUnit::jp, CentralProcessingUnit::ld_addr_a, CentralProcessingUnit::fail,
+        CentralProcessingUnit::fail, CentralProcessingUnit::fail, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::rst,
+        //0xF0
+        CentralProcessingUnit::ld_a_addr, CentralProcessingUnit::pop, CentralProcessingUnit::ld_a_addr, CentralProcessingUnit::di, 
+        CentralProcessingUnit::fail, CentralProcessingUnit::push, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::rst,
+        CentralProcessingUnit::ld_hl_sp_i8, CentralProcessingUnit::ld_sp_hl, CentralProcessingUnit::ld_a_addr, CentralProcessingUnit::ei,
+        CentralProcessingUnit::fail, CentralProcessingUnit::fail, CentralProcessingUnit::arthimetic_a, CentralProcessingUnit::rst,
     ]
 }
 
@@ -42,7 +121,7 @@ pub struct CentralProcessingUnit {
     h_flag: u8,
     c_flag: u8,
     interrupts_enable: bool,
-    function_map: [fn() -> String; 256]
+    function_map: [fn(&mut CentralProcessingUnit) -> String; 256]
 }
 
 impl CentralProcessingUnit {
@@ -65,10 +144,7 @@ impl CentralProcessingUnit {
         let mut n_flag: u8 =0;
         let mut h_flag: u8 =0;
         let mut c_flag: u8 =0;
-        fn test_func() -> String {
-            "test".to_string()
-        }
-        let function_map: [fn() -> String; 256] = [test_func; 256];
+        let function_map: [fn(&mut CentralProcessingUnit) -> String; 256] = get_function_map();
         CentralProcessingUnit {
             regs,
             reg_letter_map,
@@ -131,9 +207,17 @@ impl CentralProcessingUnit {
             self.c_flag = if val1 < val2 {1} else {0};
         }
     }
+    fn fail(&mut self) -> String {
+        let [command, _, _, _] = self.get_memory(self.pc, 1);
+        panic!("{}", format!("Unrecognized command {:X} at ld_reg_16!", command));
+        "FAIL".to_string()
+    }
     fn nop(&mut self) -> String {
         self.pc += 1;
         "NOP".to_string()
+    }
+    fn stop(&mut self) -> String {
+        "STOP".to_string()
     }
     fn ld_reg_16(&mut self) -> String {
         let [command, high_byte, low_byte, _ ] =self.get_memory(self.pc, 3);
@@ -162,7 +246,7 @@ impl CentralProcessingUnit {
         self.pc += 3;
         code
     }
-    fn ld_reg_addr_a(&mut self) -> String {
+    fn ld_addr_a(&mut self) -> String {
         let [command, adding_1, adding_2, _ ] =self.get_memory(self.pc, 3);
         let (code, addr) = match command {
             0x02 => {
@@ -474,7 +558,7 @@ impl CentralProcessingUnit {
         self.pc += 1;
         code
     }
-    fn ld_a_reg_addr(&mut self) -> String {
+    fn ld_a_addr(&mut self) -> String {
         let [command, addr_low, addr_high, _] = self.get_memory(self.pc, 3);
         let (code, addr) = match command {
             0x0A => {
@@ -657,7 +741,7 @@ impl CentralProcessingUnit {
         self.write_memory(addr, [self.regs[reg], 0, 0, 0], 1);
         format!("LD (rHL), r{}", self.reg_letter_map[reg])
     }
-    fn halt(&self) -> String {
+    fn halt(&mut self) -> String {
         "HALT".to_string()
     }
     fn arthimetic_a(&mut self) -> String {
@@ -996,5 +1080,15 @@ impl CentralProcessingUnit {
         self.sp = combine_bytes(self.regs[REG_H], self.regs[REG_L]);
         self.pc += 1;
         "LD SP, HL".to_string()
+    }
+    fn ei(&mut self) -> String {
+        self.interrupts_enable = true;
+        self.pc += 1;
+        "EI".to_string()
+    }
+    fn di(&mut self) -> String {
+        self.interrupts_enable = false;
+        self.pc += 1;
+        "DI".to_string()
     }
 }
