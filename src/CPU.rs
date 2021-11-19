@@ -19,6 +19,7 @@ fn split_u16(val: u16) -> (u8, u8) {
     ((val >> 8) as u8, (val & 0xFF) as u8)
 }
 
+#[inline]
 fn split_byte(val: u8) -> (u8, u8) {
     (val >> 4, val & 0xF)
 }
@@ -109,19 +110,56 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit) -> String; 256] {
     ]
 }
 
-
-
+fn get_cycles_map() -> [u8; 256] {
+    [
+        //0x0
+        04, 12, 08, 08, 04, 04, 08, 04, 20, 08, 08, 08, 04, 04, 08, 04,
+        //0x1
+        04, 12, 08, 08, 04, 04, 08, 04, 12, 08, 08, 08, 04, 04, 08, 04,        
+        //0x2
+        08, 12, 08, 08, 04, 04, 08, 04, 08, 08, 08, 08, 04, 04, 08, 04,        
+        //0x3
+        08, 12, 08, 08, 12, 12, 12, 04, 08, 08, 08, 08, 04, 04, 08, 04,
+        //0x4
+        04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04,
+        //0x5
+        04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04,        
+        //0x6
+        04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04,
+        //0x7
+        08, 08, 08, 08, 08, 08, 04, 08, 04, 04, 04, 04, 04, 04, 08, 04,
+        //0x8
+        04, 04, 04, 04, 04, 04, 08, 04, 04 ,04 ,04 ,04 ,04 ,04 ,08, 04,
+        //0x9
+        04, 04, 04, 04, 04, 04, 08, 04, 04 ,04 ,04 ,04 ,04 ,04 ,08, 04,    
+        //0xA
+        04, 04, 04, 04, 04, 04, 08, 04, 04 ,04 ,04 ,04 ,04 ,04 ,08, 04,  
+        //0xB
+        04, 04, 04, 04, 04, 04, 08, 04, 04 ,04 ,04 ,04 ,04 ,04 ,08, 04,
+        //0xC
+        08, 12, 12, 16, 12, 16, 08, 16, 08, 16, 12, 04, 12, 24, 08, 16,
+        //0xD
+        08, 12, 12, 00, 12, 16, 08, 16, 08, 16, 12, 00, 12, 00, 08, 16,
+        //0xE
+        12, 12, 08, 00, 00, 16, 08, 16, 16, 04, 16, 00, 00, 00, 08, 16,
+        //0xF
+        12, 12, 08, 04, 00, 16, 08, 16, 12, 08, 16, 04, 00, 00, 08, 16
+    ]
+}
 pub struct CentralProcessingUnit {
     regs: [u8; 7],
     reg_letter_map: [String; 7],
     pc: u16,
     sp: u16,
+    cycle_modification: u8,
     z_flag: u8,
     n_flag: u8,
     h_flag: u8,
     c_flag: u8,
     interrupts_enable: bool,
-    function_map: [fn(&mut CentralProcessingUnit) -> String; 256]
+    function_map: [fn(&mut CentralProcessingUnit) -> String; 256],
+    cycles_map: [u8; 256],
+    memory: [u8; 65536]
 }
 
 impl CentralProcessingUnit {
@@ -140,23 +178,32 @@ impl CentralProcessingUnit {
         let mut pc: u16 = 0x100;
         let mut sp: u16 = 0xFFFE;
         let mut interrupts_enable: bool = false;
-        let mut z_flag: u8 =0;
-        let mut n_flag: u8 =0;
-        let mut h_flag: u8 =0;
-        let mut c_flag: u8 =0;
+        let mut z_flag: u8 = 0;
+        let mut n_flag: u8 = 0;
+        let mut h_flag: u8 = 0;
+        let mut c_flag: u8 = 0;
         let function_map: [fn(&mut CentralProcessingUnit) -> String; 256] = get_function_map();
+        let cycles_map: [u8; 256] = get_cycles_map();
+        let mut cycle_modification:u8 = 0;
+        let mut memory: [u8; 65536] = [0; 65536];
         CentralProcessingUnit {
             regs,
             reg_letter_map,
             pc,
             sp,
+            cycle_modification,
             z_flag,
             n_flag,
             h_flag,
             c_flag,
             interrupts_enable,
-            function_map
+            function_map,
+            cycles_map,
+            memory
         }
+    }
+    fn run(&mut self) {
+
     }
     #[inline]
     fn get_f(&self) -> u8 {
@@ -211,9 +258,8 @@ impl CentralProcessingUnit {
         let [command, _, _, _] = self.get_memory(self.pc, 1);
         panic!("{}", format!("Unrecognized command {:X} at ld_reg_16!", command));
         "FAIL".to_string()
-    }
+    }  
     fn nop(&mut self) -> String {
-        self.pc += 1;
         "NOP".to_string()
     }
     fn stop(&mut self) -> String {
@@ -538,6 +584,7 @@ impl CentralProcessingUnit {
             _ => panic!("{}", format!("Unrecognized command {:X} at jr!", command))
         };
         if condition {
+            self.cycle_modification = 12;
             self.pc = self.pc.wrapping_add((add as i8) as u16);
         }
         code
@@ -876,25 +923,28 @@ impl CentralProcessingUnit {
             0xC0 => {
                 if self.z_flag == 0 {
                     self.pc = addr;
+                    self.cycle_modification = 20;
                 }
                 "RET NZ".to_string()
             }
             0xD0 => {
                 if self.c_flag == 0 {
                     self.pc = addr;
-
+                    self.cycle_modification = 20;
                 }
                 "RET NC".to_string()
             }
             0xC8 => {
                 if self.z_flag == 1{
                     self.pc = addr;
+                    self.cycle_modification = 20;
                 }
                 "RET Z".to_string()
             }
             0xD8 => {
                 if self.c_flag == 1{
                     self.pc = addr;
+                    self.cycle_modification = 20;
                 }
                 "RET C".to_string()
             }
@@ -970,6 +1020,7 @@ impl CentralProcessingUnit {
                 if self.z_flag == 0 {
                     self.push_stack(pc_high, pc_low);
                     self.pc = addr;
+                    self.cycle_modification = 24;
                 }
                 format!("CALL NZ {:X}", addr)
             }
@@ -977,6 +1028,7 @@ impl CentralProcessingUnit {
                 if self.c_flag == 0 {
                     self.push_stack(pc_high, pc_low);
                     self.pc = addr;
+                    self.cycle_modification = 24;
                 }
                 format!("CALL NC {:X}", addr)
             }
@@ -984,6 +1036,7 @@ impl CentralProcessingUnit {
                 if self.z_flag == 1 {
                     self.push_stack(pc_high, pc_low);
                     self.pc = addr;
+                    self.cycle_modification = 24;
                 }
                 format!("CALL Z {:X}", addr)
             }
@@ -991,12 +1044,14 @@ impl CentralProcessingUnit {
                 if self.c_flag == 1 {
                     self.push_stack(pc_high, pc_low);
                     self.pc = addr;
+                    self.cycle_modification = 24;
                 }
                 format!("CALL C {:X}", addr)
             }
             0xCD => {
                 self.push_stack(pc_high, pc_low);
                 self.pc = addr;
+                self.cycle_modification = 24;
                 format!("CALL {:X}", addr)
             }
             _ => panic!("{}", format!("Unrecognized command {:X} at call!", command))
@@ -1028,6 +1083,7 @@ impl CentralProcessingUnit {
             _ => panic!("{}", format!("Unrecognized command {:X} at jp!", command))
         };
         self.pc = if condition {
+            self.cycle_modification = 16;
             addr
         } else {
             self.pc + 3
