@@ -1,4 +1,7 @@
 use std::convert::TryInto;
+use std::sync::{Arc,Mutex};
+use std::time::Instant;
+use std::sync::mpsc;
 
 const REG_A: usize = 0;
 const REG_B: usize = 1;
@@ -8,6 +11,8 @@ const REG_E: usize = 4;
 const REG_H: usize = 5;
 const REG_L: usize = 6;
 const CARRY_LIMIT: u16 = 255;
+const NANOS_PER_DOT: f64 = 238.4185791015625;
+const INTERRUPT_DOTS: u8 = 20;
 
 #[inline]
 fn combine_bytes(high_byte: u8, low_byte: u8) -> u16 {
@@ -156,15 +161,46 @@ pub struct CentralProcessingUnit {
     n_flag: u8,
     h_flag: u8,
     c_flag: u8,
-    interrupts_enable: bool,
+    reenable_interrupts: bool,
     function_map: [fn(&mut CentralProcessingUnit) -> String; 256],
     cycles_map: [u8; 256],
-    memory: [u8; 65536]
+    memory: [u8; 65536],
+    lcdc: Arc<Mutex<u8>>,
+    stat: Arc<Mutex<u8>>,
+    vram: Arc<Mutex<[u8; 6144]>>,
+    tilemap_1: Arc<Mutex<[u8; 1024]>>,
+    tilemap_2: Arc<Mutex<[u8; 1024]>>,
+    scy: Arc<Mutex<u8>>,
+    scx: Arc<Mutex<u8>>,
+    ly: Arc<Mutex<u8>>,
+    lyc: Arc<Mutex<u8>>,
+    wy: Arc<Mutex<u8>>,
+    wx: Arc<Mutex<u8>>,
+    bgp: Arc<Mutex<u8>>,
+    interrupt_receiver: mpsc::Receiver<bool>,
+    ime: Arc<Mutex<u8>>,
+    interrupt_enable: Arc<Mutex<u8>>,
+    interrupt_flag: Arc<Mutex<u8>>
 }
 
 impl CentralProcessingUnit {
 
-    pub fn new() -> CentralProcessingUnit {
+    pub fn new(lcdc: Arc<Mutex<u8>>,
+        stat: Arc<Mutex<u8>>,
+        vram: Arc<Mutex<[u8; 6144]>>,
+        tilemap_1: Arc<Mutex<[u8; 1024]>>,
+        tilemap_2: Arc<Mutex<[u8; 1024]>>,
+        scy: Arc<Mutex<u8>>,
+        scx: Arc<Mutex<u8>>,
+        ly: Arc<Mutex<u8>>,
+        lyc: Arc<Mutex<u8>>,
+        wy: Arc<Mutex<u8>>,
+        wx: Arc<Mutex<u8>>,
+        bgp: Arc<Mutex<u8>>,
+        interrupt_receiver: mpsc::Receiver<bool>,
+        ime: Arc<Mutex<u8>>,
+        interrupt_enable: Arc<Mutex<u8>>,
+        interrupt_flag: Arc<Mutex<u8>>) -> CentralProcessingUnit {
         let regs = [0u8; 7];
         let reg_letter_map = [
             'A'.to_string(),
@@ -177,7 +213,7 @@ impl CentralProcessingUnit {
         ];
         let mut pc: u16 = 0x100;
         let mut sp: u16 = 0xFFFE;
-        let mut interrupts_enable: bool = false;
+        let mut reenable_interrupts: bool = false;
         let mut z_flag: u8 = 0;
         let mut n_flag: u8 = 0;
         let mut h_flag: u8 = 0;
@@ -196,14 +232,60 @@ impl CentralProcessingUnit {
             n_flag,
             h_flag,
             c_flag,
-            interrupts_enable,
+            reenable_interrupts,
             function_map,
             cycles_map,
-            memory
+            memory,
+            lcdc,
+            stat,
+            vram,
+            tilemap_1,
+            tilemap_2,
+            scy,
+            scx,
+            ly,
+            lyc,
+            wy,
+            wx,
+            bgp,
+            interrupt_receiver,
+            ime,
+            interrupt_enable,
+            interrupt_flag,
         }
     }
     fn run(&mut self) {
-
+        let mut now = Instant::now();
+        let interrupts = *self.interrupt_flag.lock().unwrap(); 
+        if *self.ime.lock().unwrap() == 1 && interrupts != 0 {
+            now = Instant::now();
+            let enables = *self.interrupt_enable.lock().unwrap();
+            let (mask, addr) = match (interrupts & enables).trailing_zeros() {
+                0 => {
+                    (0b11110, 0x40)
+                }
+                1 => {
+                    (0b11101, 0x48)
+                }
+                2 => {
+                    (0b11011, 0x50)
+                }
+                3 => {
+                    (0b10111, 0x58)
+                }
+                4 => {
+                    (0b01111, 0x60)
+                }
+                _ => {panic!("Wow, how did you get here? This is the interrupt area where they are no interrupts.")}
+            };
+            *self.interrupt_flag.lock().unwrap() &= mask;
+            *self.ime.lock().unwrap() = 0;
+            let (high_pc, low_pc) = split_u16(self.pc);
+            self.push_stack(high_pc, low_pc);
+            self.pc = addr;
+            while (now.elapsed().as_nanos()) < (INTERRUPT_DOTS as f64 * NANOS_PER_DOT) as u128 {}
+        }
+        
     }
     #[inline]
     fn get_f(&self) -> u8 {
@@ -954,7 +1036,7 @@ impl CentralProcessingUnit {
             }
             0xD9 => {
                 self.pc = addr;
-                self.interrupts_enable = true;
+                self.reenable_interrupts = true;
                 "RETI".to_string()
             }
             _ => panic!("{}", format!("Unrecognized command {:X} at ret!", command))
@@ -1138,12 +1220,12 @@ impl CentralProcessingUnit {
         "LD SP, HL".to_string()
     }
     fn ei(&mut self) -> String {
-        self.interrupts_enable = true;
+        self.reenable_interrupts = true;
         self.pc += 1;
         "EI".to_string()
     }
     fn di(&mut self) -> String {
-        self.interrupts_enable = false;
+        self.reenable_interrupts = false;
         self.pc += 1;
         "DI".to_string()
     }

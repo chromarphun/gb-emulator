@@ -3,6 +3,7 @@ use sdl2::event::EventPump;
 use sdl2::keyboard::Scancode;
 use sdl2::pixels::Color;
 use std::time::Instant;
+use std::sync::{Arc,Mutex};
 
 const color_map: [Color; 4] = [
     Color::RGB(15, 56, 15),
@@ -117,6 +118,21 @@ impl PictureProcessingUnit {
     fn reset_lyc_eq_lc_flag(&mut self) {
         *self.stat.lock.unwrap() == 0;
     }
+    fn trigger_vblank_int(&mut self) {
+        *self.interrupt_flag.lock().unwrap() |= 0b00001;
+    }
+    fn trigger_lcd_stat_int(&mut self) {
+        *self.interrupt_flag.lock().unwrap() |= 0b00010;
+    }
+    fn trigger_timer_int(&mut self) {
+        *self.interrupt_flag.lock().unwrap() |= 0b00100;
+    }
+    fn trigger_serial_int(&mut self) {
+        *self.interrupt_flag.lock().unwrap() |= 0b01000;
+    }
+    fn trigger_joypad_int(&mut self) {
+        *self.interrupt_flag.lock().unwrap() |= 0b10000;
+    }
     fn run(&mut self) {
         'frame_loop: loop {
             let mut now = Instant::now();
@@ -125,7 +141,7 @@ impl PictureProcessingUnit {
             } else {
                 //OAM SCAN PERIOD
                 if self.get_stat_oam_int_flag() == 1 {
-
+                    self.trigger_lcd_stat_int();
                 }
                 while (now.elapsed().as_nanos()) < (OAM_SCAN_DOTS * NANOS_PER_DOT) {}
                 //PIXEL DRAWING
@@ -181,7 +197,7 @@ impl PictureProcessingUnit {
                                     if  *self.lyc.lock().unwrap() = column {
                                         self.set_lyc_eq_lc_flag();
                                         if self.get_stat_lyc_lc_int_flag() == 1 {
-                                            
+                                            self.trigger_lcd_stat_int();
                                         }
                                     } else {
                                         self.reset_lyc_eq_lc_flag();
@@ -198,14 +214,15 @@ impl PictureProcessingUnit {
                 //we've left vram context and now vram is accessible during HBLANK
                 now = Instant::now();
                 if self.get_stat_hblank_int_flag() == 1 {
-                    
+                    self.trigger_lcd_stat_int();
                 }
                 while (now.elapsed().as_nanos()) < (HBLANK_DOTS * NANOS_PER_DOT) {}
                 }
             //VBLANK
             now = Instant::now();
+            self.trigger_vblank_int();
             if self.get_stat_vblank_int_flag() == 1 {
-                    
+                self.trigger_lcd_stat_int();
             }
             while (now.elapsed().as_nanos()) < (VBLANK_DOTS * NANOS_PER_DOT) {}
             }
