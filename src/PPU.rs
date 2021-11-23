@@ -2,6 +2,7 @@ use sdl2::render::Canvas;
 use sdl2::event::EventPump;
 use sdl2::keyboard::Scancode;
 use sdl2::pixels::Color;
+use std::time::Instant;
 
 const color_map: [Color; 4] = [
     Color::RGB(15, 56, 15),
@@ -10,15 +11,23 @@ const color_map: [Color; 4] = [
     Color::RBG(155, 188, 15)
 ];
 
-const TILES_PER_ROW: usize = 16;
-const TILES_PER_COLUMN: usize = 16;
-const BG_MAP_SIZE: usize = 256;
+const TILES_PER_ROW: usize = 32;
+const TILES_PER_COLUMN: usize = 32;
+const BG_MAP_SIZE_PX: usize = 256;
 const BG_TILE_WIDTH: usize = 8;
 const BG_TILE_HEIGHT: usize = 8;
 const BYTES_PER_TILE: usize = 16;
 const BYTES_PER_TILE_ROW: usize = 2;
-const SCREEN_PX_WIDTH: usize = 144;
-const SCREEN_PX_HEIGHT: usize = 160;
+const SCREEN_PX_WIDTH: usize = 160;
+const SCREEN_PX_HEIGHT: usize = 144;
+const TILES_PER_MAP: usize = 256;
+const VRAM_BLOCK_SIZE: usize = 128;
+const NANOS_PER_DOT: f64 = 238.4185791015625;
+const OAM_SCAN_DOTS: u16 = 80;
+const DRAWING_DOTS: u16 = 172;
+const HBLANK_DOTS: u16 = 204;
+const VBLANK_DOTS: u16 = 4560;
+const TOTAL_DOTS: u32 = 77520;
 
 
 struct PictureProcessingUnit {
@@ -82,54 +91,126 @@ impl PictureProcessingUnit {
             }
         }
     fn get_tile_map_flag(&self) -> u8 {
-        (self.lcdc.lock.unwrap() >> 3) & 1
+        (*self.lcdc.lock.unwrap() >> 3) & 1
     }
     fn get_tile_data_flag(&self) -> u8 {
-        (self.lcdc.lock.unwrap() >> 4) & 1
+        (*self.lcdc.lock.unwrap() >> 4) & 1
+    }
+    fn get_lcd_enable_flag(&self) -> u8 {
+        (*self.lcdc.lock.unwrap() >> 7) & 1
+    }
+    fn get_stat_lyc_lc_int_flag(&self) -> u8 {
+        (*self.stat.lock.unwrap() >> 6) & 1
+    }
+    fn get_stat_oam_int_flag(&self) -> u8 {
+        (*self.stat.lock.unwrap() >> 5) & 1
+    }
+    fn get_stat_vblank_int_flag(&self) -> u8 {
+        (*self.stat.lock.unwrap() >> 4) & 1
+    }
+    fn get_stat_hblank_int_flag(&self) -> u8 {
+        (*self.stat.lock.unwrap() >> 3) & 1
+    }
+    fn set_lyc_eq_lc_flag(&mut self) {
+        *self.stat.lock.unwrap() == 1;
+    }
+    fn reset_lyc_eq_lc_flag(&mut self) {
+        *self.stat.lock.unwrap() == 0;
     }
     fn run(&mut self) {
         'frame_loop: loop {
-            {
-                let vram = self.vram.lock().unwrap();
+            let mut now = Instant::now();
+            if self.get_lcd_enable_flag() == 0 {
+                while (now.elapsed().as_nanos()) < (TOTAL_DOTS * NANOS_PER_DOT) {}
+            } else {
+                //OAM SCAN PERIOD
+                if self.get_stat_oam_int_flag() == 1 {
 
+                }
+                while (now.elapsed().as_nanos()) < (OAM_SCAN_DOTS * NANOS_PER_DOT) {}
+                //PIXEL DRAWING
                 for row in 0..160 {
-                    let (scx, scy) = {
-                        (self.scx.lock().unwrap(), self.scy.lock().unwrap())
-                    };
-                    let total_row = (scy + row) % BG_MAP_SIZE;
-                    let mut column = 0;
-
-                    let tilemap = if self.get_tile_map_flag() == 0 {
-                        self.tilemap_1.lock().unwrap()
-                    } else {
-                        self.tilemap_2.lock().unwrap()
-                    };
-                    while column < SCREEN_PX_WIDTH {
-                        let total_column = (scx + column) % BG_MAP_SIZE;
-                        let tile_in_column = total_column % TILE_HEIGHT;
-                        if self.get_tile_data_flag() == 0 {
-                            let index = TILES_PER_ROW * BYTES_PER_TILE * (total_row / TILE_HEIGHT) 
-                                + BYTES_PER_TILE * (total_column / TILE_WIDTH) 
-                                + BYTES_PER_TILE_ROW * (total_row % TILE_HEIGHT);
-                            let least_sig_byte = tilemap[index];
-                            let most_sig_byte = tilemap[index + 1];
-                            while tile_in_column < TILE_WIDTH && column < SCREEN_PX_WIDTH {
-                                let color_index = (((most_sig_byte >> (TILE_WIDTH - tile_in_column - 1)) & 1) << 1) + ((most_sig_byte >> (TILE_WIDTH - tile_in_column - 1)) & 1);
+                    //create context for vram lock to exist
+                    {
+                        now = Instant::now();
+                        let vram = self.vram.lock().unwrap();
+                        let (scx, scy) = {
+                            (self.scx.lock().unwrap(), self.scy.lock().unwrap())
+                        };
+                        let tilemap = if self.get_tile_map_flag() == 0 {
+                            self.tilemap_1.lock().unwrap()
+                        } else {
+                            self.tilemap_2.lock().unwrap()
+                        };
+                        let total_row = (scy + row) % BG_MAP_SIZE_PX;
+                        let mut column = 0;
+                        let mut total_column = (scx + column) % BG_MAP_SIZE_PX;
+                        let mut px_within_row = column % TILE_WIDTH;
+                        while column < SCREEN_PX_WIDTH {
+        
+                            let tile_map_index = TILES_PER_ROW * (total_row / TILE_HEIGHT) // getting to the right row for a tile
+                                * (total_column / TILE_WIDTH); // getting to the right column for a tile 
+        
+        
+                            let absolute_tile_index = if self.get_tile_data_flag() == 0 {
+                                tilemap[tile_map_index]
+                            } else {
+                                let initial_index = tilemap[tile_map_index];
+                                if initial_index < VRAM_BLOCK_SIZE {
+                                    initial_index + 2* VRAM_BLOCK_SIZE
+                                } else {
+                                    initial_index
+                                }
+                            };
+                            let tile_data_index = absolute_tile_index * BYTES_PER_TILE // getting to the starting byte
+                                + (total_row % TILE_HEIGHT) * BYTES_PER_TILE_ROW; //getting to the row
+        
+                            let least_sig_byte = tilemap[absolute_tile_index];
+                            let most_sig_byte = tilemap[absolute_tile_index + 1];
+                            while px_within_row < TILE_WIDTH && column < SCREEN_PX_WIDTH {
+                                total_column = (scx + column) % BG_MAP_SIZE;
+                                px_within_row = column % TILE_WIDTH;
+                                let color_index = (((most_sig_byte >> (TILE_WIDTH - px_within_row - 1)) & 1) << 1) + ((most_sig_byte >> (TILE_WIDTH - px_within_row - 1)) & 1);
                                 canvas.set_draw_color(color_map[color_index]);
                                 canvas
                                 .fill_rect(Rect::new(column, row, 1, 1))
                                 .expect("Failure to draw");
+                                column += 1;
+                                {
+                                    *self.ly.lock().unwrap() = column;
+                                    if  *self.lyc.lock().unwrap() = column {
+                                        self.set_lyc_eq_lc_flag();
+                                        if self.get_stat_lyc_lc_int_flag() == 1 {
+                                            
+                                        }
+                                    } else {
+                                        self.reset_lyc_eq_lc_flag();
+                                    }
+                                }
+
                             }
                         }
+                        //spin while we're waiting for drawing pixel period to end
+                        //vram is still locked! 
+                        while (now.elapsed().as_nanos()) < (DRAWING_DOTS * NANOS_PER_DOT) {}
                     }
-
+                //HBLANK
+                //we've left vram context and now vram is accessible during HBLANK
+                now = Instant::now();
+                if self.get_stat_hblank_int_flag() == 1 {
+                    
                 }
-
-
+                while (now.elapsed().as_nanos()) < (HBLANK_DOTS * NANOS_PER_DOT) {}
+                }
+            //VBLANK
+            now = Instant::now();
+            if self.get_stat_vblank_int_flag() == 1 {
+                    
+            }
+            while (now.elapsed().as_nanos()) < (VBLANK_DOTS * NANOS_PER_DOT) {}
             }
 
         }
-
-
     }
 }
+
