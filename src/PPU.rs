@@ -1,15 +1,18 @@
-use sdl2::render::Canvas;
-use sdl2::event::EventPump;
+use sdl2::event::Event;
 use sdl2::keyboard::Scancode;
 use sdl2::pixels::Color;
+use sdl2::rect::Rect;
+use sdl2::render::Canvas;
+use sdl2::video::Window;
+use sdl2::EventPump;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use std::sync::{Arc,Mutex};
 
 const color_map: [Color; 4] = [
     Color::RGB(15, 56, 15),
     Color::RGB(48, 98, 48),
-    Color::RBG(139, 172, 15),
-    Color::RBG(155, 188, 15)
+    Color::RGB(139, 172, 15),
+    Color::RGB(155, 188, 15),
 ];
 
 const TILES_PER_ROW: usize = 32;
@@ -29,7 +32,8 @@ const DRAWING_DOTS: u16 = 172;
 const HBLANK_DOTS: u16 = 204;
 const VBLANK_DOTS: u16 = 4560;
 const TOTAL_DOTS: u32 = 77520;
-
+const WINDOW_WIDTH: u32 = 1;
+const WINDOW_HEIGHT: u32 = 1;
 
 struct PictureProcessingUnit {
     lcdc: Arc<Mutex<u8>>,
@@ -38,7 +42,7 @@ struct PictureProcessingUnit {
     tilemap_1: Arc<Mutex<[u8; 1024]>>,
     tilemap_2: Arc<Mutex<[u8; 1024]>>,
     screen: [u8; 23040],
-    canvas: Canvas,
+    canvas: Canvas<Window>,
     event_pump: EventPump,
     scy: Arc<Mutex<u8>>,
     scx: Arc<Mutex<u8>>,
@@ -46,11 +50,13 @@ struct PictureProcessingUnit {
     lyc: Arc<Mutex<u8>>,
     wy: Arc<Mutex<u8>>,
     wx: Arc<Mutex<u8>>,
-    bgp: Arc<Mutex<u8>>, 
+    bgp: Arc<Mutex<u8>>,
+    interrupt_flag: Arc<Mutex<u8>>,
 }
 
 impl PictureProcessingUnit {
-    fn new(lcdc: Arc<Mutex<u8>>,
+    fn new(
+        lcdc: Arc<Mutex<u8>>,
         stat: Arc<Mutex<u8>>,
         vram: Arc<Mutex<[u8; 6144]>>,
         tilemap_1: Arc<Mutex<[u8; 1024]>>,
@@ -61,62 +67,65 @@ impl PictureProcessingUnit {
         lyc: Arc<Mutex<u8>>,
         wy: Arc<Mutex<u8>>,
         wx: Arc<Mutex<u8>>,
-        bgp: Arc<Mutex<u8>>) -> PictureProcessingUnit {
-            let screen = [0; 23040];
-            let sdl_context = sdl2::init().unwrap();
-            let video_subsystem = sdl_context.video().unwrap();
-            let window = video_subsystem
-                .window("Chip 18 Emulator", LONG_SIDE, SHORT_SIDE)
-                .position_centered()
-                .build()
-                .unwrap();
-        
-            let mut canvas = window.into_canvas().build().unwrap();
-            let mut event_pump = sdl_context.event_pump().unwrap();
-            PictureProcessingUnit {
-                lcdc,
-                stat,
-                vram,
-                tilemap_1,
-                tilemap_2,
-                screen,
-                canvas,
-                event_pump: EventPump,
-                scy,
-                scx,
-                ly,
-                lyc,
-                wy,
-                wx,
-                bgp, 
-            }
+        bgp: Arc<Mutex<u8>>,
+        interrupt_flag: Arc<Mutex<u8>>,
+    ) -> PictureProcessingUnit {
+        let screen = [0; 23040];
+        let sdl_context = sdl2::init().unwrap();
+        let video_subsystem = sdl_context.video().unwrap();
+        let window = video_subsystem
+            .window("Chip 18 Emulator", WINDOW_WIDTH, WINDOW_HEIGHT)
+            .position_centered()
+            .build()
+            .unwrap();
+
+        let mut canvas = window.into_canvas().build().unwrap();
+        let mut event_pump = sdl_context.event_pump().unwrap();
+        PictureProcessingUnit {
+            lcdc,
+            stat,
+            vram,
+            tilemap_1,
+            tilemap_2,
+            screen,
+            canvas,
+            event_pump,
+            scy,
+            scx,
+            ly,
+            lyc,
+            wy,
+            wx,
+            bgp,
+            interrupt_flag,
         }
+    }
     fn get_tile_map_flag(&self) -> u8 {
-        (*self.lcdc.lock.unwrap() >> 3) & 1
+        (*self.lcdc.lock().unwrap() >> 3) & 1
     }
     fn get_tile_data_flag(&self) -> u8 {
-        (*self.lcdc.lock.unwrap() >> 4) & 1
+        (*self.lcdc.lock().unwrap() >> 4) & 1
     }
     fn get_lcd_enable_flag(&self) -> u8 {
-        (*self.lcdc.lock.unwrap() >> 7) & 1
+        (*self.lcdc.lock().unwrap() >> 7) & 1
     }
     fn get_stat_lyc_lc_int_flag(&self) -> u8 {
-        (*self.stat.lock.unwrap() >> 6) & 1
+        (*self.stat.lock().unwrap() >> 6) & 1
     }
     fn get_stat_oam_int_flag(&self) -> u8 {
-        (*self.stat.lock.unwrap() >> 5) & 1
+        (*self.stat.lock().unwrap() >> 5) & 1
     }
     fn get_stat_vblank_int_flag(&self) -> u8 {
-        (*self.stat.lock.unwrap() >> 4) & 1
+        (*self.stat.lock().unwrap() >> 4) & 1
     }
     fn get_stat_hblank_int_flag(&self) -> u8 {
-        (*self.stat.lock.unwrap() >> 3) & 1
+        (*self.stat.lock().unwrap() >> 3) & 1
     }
     fn set_lyc_eq_lc_flag(&mut self) {
-        *self.stat.lock.unwrap() == 1;
+        *self.stat.lock().unwrap() == 1;
     }
     fn reset_lyc_eq_lc_flag(&mut self) {
-        *self.stat.lock.unwrap() == 0;
+        *self.stat.lock().unwrap() == 0;
     }
     fn trigger_vblank_int(&mut self) {
         *self.interrupt_flag.lock().unwrap() |= 0b00001;
@@ -137,13 +146,13 @@ impl PictureProcessingUnit {
         'frame_loop: loop {
             let mut now = Instant::now();
             if self.get_lcd_enable_flag() == 0 {
-                while (now.elapsed().as_nanos()) < (TOTAL_DOTS * NANOS_PER_DOT) {}
+                while (now.elapsed().as_nanos()) < (TOTAL_DOTS as f64 * NANOS_PER_DOT) as u128 {}
             } else {
                 //OAM SCAN PERIOD
                 if self.get_stat_oam_int_flag() == 1 {
                     self.trigger_lcd_stat_int();
                 }
-                while (now.elapsed().as_nanos()) < (OAM_SCAN_DOTS * NANOS_PER_DOT) {}
+                while (now.elapsed().as_nanos()) < (OAM_SCAN_DOTS as f64 * NANOS_PER_DOT) as u128 {}
                 //PIXEL DRAWING
                 for row in 0..160 {
                     //create context for vram lock to exist
@@ -151,83 +160,90 @@ impl PictureProcessingUnit {
                         now = Instant::now();
                         let vram = self.vram.lock().unwrap();
                         let (scx, scy) = {
-                            (self.scx.lock().unwrap(), self.scy.lock().unwrap())
+                            (
+                                *self.scx.lock().unwrap() as usize,
+                                *self.scy.lock().unwrap() as usize,
+                            )
                         };
                         let tilemap = if self.get_tile_map_flag() == 0 {
                             self.tilemap_1.lock().unwrap()
                         } else {
                             self.tilemap_2.lock().unwrap()
                         };
-                        let total_row = (scy + row) % BG_MAP_SIZE_PX;
-                        let mut column = 0;
+                        let total_row: usize = (scy + row) as usize % BG_MAP_SIZE_PX;
+                        let mut column: usize = 0;
                         let mut total_column = (scx + column) % BG_MAP_SIZE_PX;
-                        let mut px_within_row = column % TILE_WIDTH;
+                        let mut px_within_row = column % BG_TILE_WIDTH;
                         while column < SCREEN_PX_WIDTH {
-        
-                            let tile_map_index = TILES_PER_ROW * (total_row / TILE_HEIGHT) // getting to the right row for a tile
-                                * (total_column / TILE_WIDTH); // getting to the right column for a tile 
-        
-        
+                            let tile_map_index = TILES_PER_ROW * (total_row / BG_TILE_HEIGHT) // getting to the right row for a tile
+                                * (total_column / BG_TILE_WIDTH); // getting to the right column for a tile
+
                             let absolute_tile_index = if self.get_tile_data_flag() == 0 {
-                                tilemap[tile_map_index]
+                                tilemap[tile_map_index as usize] as usize
                             } else {
-                                let initial_index = tilemap[tile_map_index];
+                                let initial_index = tilemap[tile_map_index as usize] as usize;
                                 if initial_index < VRAM_BLOCK_SIZE {
-                                    initial_index + 2* VRAM_BLOCK_SIZE
+                                    initial_index + 2 * VRAM_BLOCK_SIZE
                                 } else {
                                     initial_index
                                 }
                             };
                             let tile_data_index = absolute_tile_index * BYTES_PER_TILE // getting to the starting byte
-                                + (total_row % TILE_HEIGHT) * BYTES_PER_TILE_ROW; //getting to the row
-        
-                            let least_sig_byte = tilemap[absolute_tile_index];
-                            let most_sig_byte = tilemap[absolute_tile_index + 1];
-                            while px_within_row < TILE_WIDTH && column < SCREEN_PX_WIDTH {
-                                total_column = (scx + column) % BG_MAP_SIZE;
-                                px_within_row = column % TILE_WIDTH;
-                                let color_index = (((most_sig_byte >> (TILE_WIDTH - px_within_row - 1)) & 1) << 1) + ((most_sig_byte >> (TILE_WIDTH - px_within_row - 1)) & 1);
-                                canvas.set_draw_color(color_map[color_index]);
-                                canvas
-                                .fill_rect(Rect::new(column, row, 1, 1))
-                                .expect("Failure to draw");
+                                + (total_row % BG_TILE_WIDTH) * BYTES_PER_TILE_ROW; //getting to the row
+
+                            let least_sig_byte = vram[tile_data_index as usize];
+                            let most_sig_byte = vram[(tile_data_index + 1) as usize];
+                            while px_within_row < BG_TILE_WIDTH && column < SCREEN_PX_WIDTH {
+                                total_column = (scx + column) % BG_MAP_SIZE_PX;
+                                px_within_row = column % BG_TILE_WIDTH;
+                                let color_index = (((most_sig_byte
+                                    >> (BG_TILE_WIDTH - px_within_row - 1))
+                                    & 1)
+                                    << 1)
+                                    + ((least_sig_byte >> (BG_TILE_WIDTH - px_within_row - 1)) & 1);
+                                self.canvas.set_draw_color(color_map[color_index as usize]);
+                                self.canvas
+                                    .fill_rect(Rect::new(column as i32, row as i32, 1, 1))
+                                    .expect("Failure to draw");
                                 column += 1;
                                 {
-                                    *self.ly.lock().unwrap() = column;
-                                    if  *self.lyc.lock().unwrap() = column {
-                                        self.set_lyc_eq_lc_flag();
+                                    *self.ly.lock().unwrap() = column as u8;
+                                    if *self.lyc.lock().unwrap() == column as u8 {
+                                        *self.stat.lock().unwrap() |= 0b1000000;
                                         if self.get_stat_lyc_lc_int_flag() == 1 {
-                                            self.trigger_lcd_stat_int();
+                                            *self.interrupt_flag.lock().unwrap() |= 0b00010;
                                         }
                                     } else {
-                                        self.reset_lyc_eq_lc_flag();
+                                        *self.stat.lock().unwrap() &= 0b0111111;
                                     }
                                 }
-
                             }
                         }
                         //spin while we're waiting for drawing pixel period to end
-                        //vram is still locked! 
-                        while (now.elapsed().as_nanos()) < (DRAWING_DOTS * NANOS_PER_DOT) {}
+                        //vram is still locked!
+                        while (now.elapsed().as_nanos())
+                            < (DRAWING_DOTS as f64 * NANOS_PER_DOT) as u128
+                        {
+                        }
                     }
-                //HBLANK
-                //we've left vram context and now vram is accessible during HBLANK
+                    //HBLANK
+                    //we've left vram context and now vram is accessible during HBLANK
+                    now = Instant::now();
+                    if self.get_stat_hblank_int_flag() == 1 {
+                        *self.interrupt_flag.lock().unwrap() |= 0b00010;
+                    }
+                    while (now.elapsed().as_nanos()) < (HBLANK_DOTS as f64 * NANOS_PER_DOT) as u128
+                    {
+                    }
+                }
+                //VBLANK
                 now = Instant::now();
-                if self.get_stat_hblank_int_flag() == 1 {
-                    self.trigger_lcd_stat_int();
+                self.trigger_vblank_int();
+                if self.get_stat_vblank_int_flag() == 1 {
+                    *self.interrupt_flag.lock().unwrap() |= 0b00010;
                 }
-                while (now.elapsed().as_nanos()) < (HBLANK_DOTS * NANOS_PER_DOT) {}
-                }
-            //VBLANK
-            now = Instant::now();
-            self.trigger_vblank_int();
-            if self.get_stat_vblank_int_flag() == 1 {
-                self.trigger_lcd_stat_int();
+                while (now.elapsed().as_nanos()) < (VBLANK_DOTS as f64 * NANOS_PER_DOT) as u128 {}
             }
-            while (now.elapsed().as_nanos()) < (VBLANK_DOTS * NANOS_PER_DOT) {}
-            }
-
         }
     }
 }
-
