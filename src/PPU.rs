@@ -32,16 +32,15 @@ const DRAWING_DOTS: u16 = 172;
 const HBLANK_DOTS: u16 = 204;
 const VBLANK_DOTS: u16 = 4560;
 const TOTAL_DOTS: u32 = 77520;
-const WINDOW_WIDTH: u32 = 1;
-const WINDOW_HEIGHT: u32 = 1;
+const WINDOW_WIDTH: u32 = 160;
+const WINDOW_HEIGHT: u32 = 144;
 
-struct PictureProcessingUnit {
+pub struct PictureProcessingUnit {
     lcdc: Arc<Mutex<u8>>,
     stat: Arc<Mutex<u8>>,
     vram: Arc<Mutex<[u8; 6144]>>,
     tilemap_1: Arc<Mutex<[u8; 1024]>>,
     tilemap_2: Arc<Mutex<[u8; 1024]>>,
-    screen: [u8; 23040],
     canvas: Canvas<Window>,
     event_pump: EventPump,
     scy: Arc<Mutex<u8>>,
@@ -55,7 +54,7 @@ struct PictureProcessingUnit {
 }
 
 impl PictureProcessingUnit {
-    fn new(
+    pub fn new(
         lcdc: Arc<Mutex<u8>>,
         stat: Arc<Mutex<u8>>,
         vram: Arc<Mutex<[u8; 6144]>>,
@@ -70,11 +69,10 @@ impl PictureProcessingUnit {
         bgp: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
     ) -> PictureProcessingUnit {
-        let screen = [0; 23040];
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
         let window = video_subsystem
-            .window("Chip 18 Emulator", WINDOW_WIDTH, WINDOW_HEIGHT)
+            .window("Gameboy Emulator", WINDOW_WIDTH, WINDOW_HEIGHT)
             .position_centered()
             .build()
             .unwrap();
@@ -87,7 +85,6 @@ impl PictureProcessingUnit {
             vram,
             tilemap_1,
             tilemap_2,
-            screen,
             canvas,
             event_pump,
             scy,
@@ -142,7 +139,7 @@ impl PictureProcessingUnit {
     fn trigger_joypad_int(&mut self) {
         *self.interrupt_flag.lock().unwrap() |= 0b10000;
     }
-    fn run(&mut self) {
+    pub fn run(&mut self) {
         'frame_loop: loop {
             let mut now = Instant::now();
             if self.get_lcd_enable_flag() == 0 {
@@ -150,7 +147,7 @@ impl PictureProcessingUnit {
             } else {
                 //OAM SCAN PERIOD
                 if self.get_stat_oam_int_flag() == 1 {
-                    self.trigger_lcd_stat_int();
+                    *self.interrupt_flag.lock().unwrap() |= 0b00010;
                 }
                 while (now.elapsed().as_nanos()) < (OAM_SCAN_DOTS as f64 * NANOS_PER_DOT) as u128 {}
                 //PIXEL DRAWING
@@ -159,6 +156,13 @@ impl PictureProcessingUnit {
                     {
                         now = Instant::now();
                         let vram = self.vram.lock().unwrap();
+                        let bgp = *self.bgp.lock().unwrap() as usize;
+                        let color_indexes: [usize; 4] = [
+                            (bgp >> 6) & 0b11,
+                            (bgp >> 4) & 0b11,
+                            (bgp >> 2) & 0b11,
+                            (bgp >> 0) & 0b11,
+                        ];
                         let (scx, scy) = {
                             (
                                 *self.scx.lock().unwrap() as usize,
@@ -196,12 +200,13 @@ impl PictureProcessingUnit {
                             while px_within_row < BG_TILE_WIDTH && column < SCREEN_PX_WIDTH {
                                 total_column = (scx + column) % BG_MAP_SIZE_PX;
                                 px_within_row = column % BG_TILE_WIDTH;
-                                let color_index = (((most_sig_byte
-                                    >> (BG_TILE_WIDTH - px_within_row - 1))
-                                    & 1)
-                                    << 1)
-                                    + ((least_sig_byte >> (BG_TILE_WIDTH - px_within_row - 1)) & 1);
-                                self.canvas.set_draw_color(color_map[color_index as usize]);
+                                let bgp_index =
+                                    ((((most_sig_byte >> (BG_TILE_WIDTH - px_within_row - 1)) & 1)
+                                        << 1)
+                                        + ((least_sig_byte >> (BG_TILE_WIDTH - px_within_row - 1))
+                                            & 1)) as usize;
+                                self.canvas
+                                    .set_draw_color(color_map[color_indexes[bgp_index]]);
                                 self.canvas
                                     .fill_rect(Rect::new(column as i32, row as i32, 1, 1))
                                     .expect("Failure to draw");
