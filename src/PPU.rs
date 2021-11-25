@@ -1,7 +1,7 @@
 use sdl2::event::Event;
 use sdl2::keyboard::Scancode;
 use sdl2::pixels::Color;
-use sdl2::rect::Rect;
+use sdl2::rect::Point;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 use sdl2::EventPump;
@@ -163,12 +163,26 @@ impl PictureProcessingUnit {
                         7168
                     };
                     let total_row: usize = (scy + row) as usize % BG_MAP_SIZE_PX;
-                    let mut column: usize = 0;
-                    let mut total_column = (scx + column) % BG_MAP_SIZE_PX;
-                    let mut px_within_row = column % BG_TILE_WIDTH;
-                    while column < SCREEN_PX_WIDTH {
-                        let tile_map_index = TILES_PER_ROW * (total_row / BG_TILE_HEIGHT) // getting to the right row for a tile
-                            + (total_column / BG_TILE_WIDTH); // getting to the right column for a tile
+
+                    let total_column = scx % BG_MAP_SIZE_PX;
+
+                    let px_within_row = total_column % BG_TILE_WIDTH;
+
+                    let extra_tile = px_within_row != 0;
+
+                    let extra_end_index = BG_TILE_WIDTH - px_within_row;
+
+                    let mut end_index = 8;
+
+                    let starting_tile_map_index = TILES_PER_ROW * (total_row / BG_TILE_HEIGHT)
+                        + (total_column / BG_TILE_WIDTH);
+
+                    let row_within_tile = total_row % BG_TILE_WIDTH;
+
+                    let mut column = 0;
+
+                    for t in 0..21 {
+                        let tile_map_index = starting_tile_map_index + t;
                         let absolute_tile_index = if tile_data_flag == 1 {
                             vram[tilemap_start + tile_map_index as usize] as usize
                         } else {
@@ -181,30 +195,28 @@ impl PictureProcessingUnit {
                             }
                         };
                         let tile_data_index = absolute_tile_index * BYTES_PER_TILE // getting to the starting byte
-                            + (total_row % BG_TILE_WIDTH) * BYTES_PER_TILE_ROW; //getting to the row
-
+                        + row_within_tile * BYTES_PER_TILE_ROW; //getting to the row
                         let least_sig_byte = vram[tile_data_index as usize];
                         let most_sig_byte = vram[(tile_data_index + 1) as usize];
-                        while px_within_row < BG_TILE_WIDTH && column < SCREEN_PX_WIDTH {
-                            total_column = (scx + column) % BG_MAP_SIZE_PX;
-
-                            let bgp_index =
-                                ((((most_sig_byte >> (BG_TILE_WIDTH - px_within_row - 1)) & 1)
-                                    << 1)
-                                    + ((least_sig_byte >> (BG_TILE_WIDTH - px_within_row - 1)) & 1))
-                                    as usize;
+                        for pixel in px_within_row..end_index {
+                            let bgp_index = ((((most_sig_byte >> (BG_TILE_WIDTH - pixel - 1)) & 1)
+                                << 1)
+                                + ((least_sig_byte >> (BG_TILE_WIDTH - pixel - 1)) & 1))
+                                as usize;
                             self.canvas
                                 .set_draw_color(COLOR_MAP[color_indexes[bgp_index]]);
-                            if self.get_lcd_enable_flag() == 1 {
-                                self.canvas
-                                    .fill_rect(Rect::new(column as i32, row as i32, 1, 1))
-                                    .expect("Failure to draw");
-                            }
-                            //self.canvas.present();
+                            self.canvas
+                                .draw_point(Point::new(column as i32, row as i32))
+                                .expect("Failure to draw");
                             column += 1;
-                            px_within_row += 1;
                         }
-                        px_within_row = 0;
+                        if t == 19 {
+                            if extra_tile {
+                                end_index = extra_end_index;
+                            } else {
+                                break;
+                            }
+                        }
                     }
                     //spin while we're waiting for drawing pixel period to end
                     //vram is still locked!
@@ -219,12 +231,13 @@ impl PictureProcessingUnit {
                 if self.get_stat_hblank_int_flag() == 1 {
                     *self.interrupt_flag.lock().unwrap() |= 0b00010;
                 }
-                self.canvas.present();
+
                 while (now.elapsed().as_nanos()) < (HBLANK_DOTS as f64 * NANOS_PER_DOT) as u128 {}
             }
             //VBLANK
 
             now = Instant::now();
+            self.canvas.present();
             // let cycles = (start.elapsed().as_nanos()) / NANOS_PER_DOT as u128;
             // println!("{}", cycles);
             *self.interrupt_flag.lock().unwrap() |= 0b00001;
