@@ -1,7 +1,6 @@
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::prelude::*;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -41,7 +40,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8) -> String; 256] {
         CentralProcessingUnit::inc_reg_8,
         CentralProcessingUnit::dec_reg_8,
         CentralProcessingUnit::ld_reg_8,
-        CentralProcessingUnit::rot_a_left_carry,
+        CentralProcessingUnit::rot_a_left,
         CentralProcessingUnit::ld_addr_sp,
         CentralProcessingUnit::add_hl_reg_16,
         CentralProcessingUnit::ld_a_addr,
@@ -49,7 +48,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8) -> String; 256] {
         CentralProcessingUnit::inc_reg_8,
         CentralProcessingUnit::dec_reg_8,
         CentralProcessingUnit::ld_reg_8,
-        CentralProcessingUnit::rot_a_right_carry,
+        CentralProcessingUnit::rot_a_right,
         //0x10
         CentralProcessingUnit::stop,
         CentralProcessingUnit::ld_reg_16,
@@ -58,7 +57,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8) -> String; 256] {
         CentralProcessingUnit::inc_reg_8,
         CentralProcessingUnit::dec_reg_8,
         CentralProcessingUnit::ld_reg_8,
-        CentralProcessingUnit::rot_a_left,
+        CentralProcessingUnit::rot_a_left_carry,
         CentralProcessingUnit::jr,
         CentralProcessingUnit::add_hl_reg_16,
         CentralProcessingUnit::ld_a_addr,
@@ -66,7 +65,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8) -> String; 256] {
         CentralProcessingUnit::inc_reg_8,
         CentralProcessingUnit::dec_reg_8,
         CentralProcessingUnit::ld_reg_8,
-        CentralProcessingUnit::rot_a_right,
+        CentralProcessingUnit::rot_a_right_carry,
         //0x20
         CentralProcessingUnit::jr,
         CentralProcessingUnit::ld_reg_16,
@@ -249,7 +248,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8) -> String; 256] {
         CentralProcessingUnit::ret,
         CentralProcessingUnit::ret,
         CentralProcessingUnit::jp,
-        CentralProcessingUnit::nop,
+        CentralProcessingUnit::cb,
         CentralProcessingUnit::call,
         CentralProcessingUnit::call,
         CentralProcessingUnit::arthimetic_a,
@@ -345,9 +344,7 @@ pub struct CentralProcessingUnit {
     memory: [u8; 65536],
     lcdc: Arc<Mutex<u8>>,
     stat: Arc<Mutex<u8>>,
-    vram: Arc<Mutex<[u8; 6144]>>,
-    tilemap_1: Arc<Mutex<[u8; 1024]>>,
-    tilemap_2: Arc<Mutex<[u8; 1024]>>,
+    vram: Arc<Mutex<[u8; 8192]>>,
     scy: Arc<Mutex<u8>>,
     scx: Arc<Mutex<u8>>,
     ly: Arc<Mutex<u8>>,
@@ -365,9 +362,7 @@ impl CentralProcessingUnit {
     pub fn new(
         lcdc: Arc<Mutex<u8>>,
         stat: Arc<Mutex<u8>>,
-        vram: Arc<Mutex<[u8; 6144]>>,
-        tilemap_1: Arc<Mutex<[u8; 1024]>>,
-        tilemap_2: Arc<Mutex<[u8; 1024]>>,
+        vram: Arc<Mutex<[u8; 8192]>>,
         scy: Arc<Mutex<u8>>,
         scx: Arc<Mutex<u8>>,
         ly: Arc<Mutex<u8>>,
@@ -389,18 +384,18 @@ impl CentralProcessingUnit {
             'H'.to_string(),
             'L'.to_string(),
         ];
-        let mut pc: u16 = 0x100;
-        let mut sp: u16 = 0xFFFE;
-        let mut reenable_interrupts: bool = false;
-        let mut z_flag: u8 = 0;
-        let mut n_flag: u8 = 0;
-        let mut h_flag: u8 = 0;
-        let mut c_flag: u8 = 0;
+        let pc: u16 = 0x0;
+        let sp: u16 = 0xFFFE;
+        let reenable_interrupts: bool = false;
+        let z_flag: u8 = 0;
+        let n_flag: u8 = 0;
+        let h_flag: u8 = 0;
+        let c_flag: u8 = 0;
         let function_map: [fn(&mut CentralProcessingUnit, u8) -> String; 256] = get_function_map();
         let cycles_map: [u8; 256] = get_cycles_map();
-        let mut cycle_modification: u8 = 0;
-        let mut memory: [u8; 65536] = [0; 65536];
-        let mut change_ime = false;
+        let cycle_modification: u8 = 0;
+        let memory: [u8; 65536] = [0; 65536];
+        let change_ime = false;
         CentralProcessingUnit {
             regs,
             reg_letter_map,
@@ -418,8 +413,6 @@ impl CentralProcessingUnit {
             lcdc,
             stat,
             vram,
-            tilemap_1,
-            tilemap_2,
             scy,
             scx,
             ly,
@@ -434,7 +427,8 @@ impl CentralProcessingUnit {
         }
     }
     pub fn run(&mut self) {
-        let mut f = File::open("../example_rows/rom_test_from_poke_blue").expect("File problem!");
+        let mut f = File::open("C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\rom_test_from_poke_blue")
+            .expect("File problem!");
         f.read(&mut self.memory).expect("Read issue!");
         {
             let mut hold_mem = [0u8; 256];
@@ -466,9 +460,9 @@ impl CentralProcessingUnit {
             }
             self.memory[..256].copy_from_slice(&hold_mem);
         }
-        loop {
-            self.process();
-        }
+        // loop {
+        //     self.process();
+        // }
     }
     fn process(&mut self) {
         let mut now = Instant::now();
@@ -501,8 +495,9 @@ impl CentralProcessingUnit {
             while (now.elapsed().as_nanos()) < (INTERRUPT_DOTS as f64 * NANOS_PER_DOT) as u128 {}
         } else {
             let command = self.get_memory(self.pc as usize) as usize;
-            self.function_map[command](self, command as u8);
-
+            let curr_pc = self.pc;
+            let dis = self.function_map[command](self, command as u8);
+            println!("{}", format!("command: {}, pc: 0x{:X}", dis, curr_pc));
             let cycles = if self.cycle_modification != 0 {
                 let val = self.cycle_modification;
                 self.cycle_modification = 0;
@@ -527,12 +522,12 @@ impl CentralProcessingUnit {
     }
     #[inline]
     fn push_stack(&mut self, high_val: u8, low_val: u8) {
+        self.write_memory((self.sp - 1) as usize, high_val);
         self.write_memory((self.sp - 2) as usize, low_val);
-        self.write_memory((self.sp - 1) as usize, low_val);
         self.sp -= 2;
     }
     fn pop_stack(&mut self) -> [u8; 2] {
-        let val1 = self.get_memory(self.sp as usize);
+        let val1 = self.get_memory((self.sp) as usize);
         let val2 = self.get_memory((self.sp + 1) as usize);
         self.sp += 2;
         [val1, val2]
@@ -545,7 +540,7 @@ impl CentralProcessingUnit {
             0x8000..=0x9FFF => {
                 let mutex = self.vram.try_lock();
                 if let Ok(mut mem_unlocked) = mutex {
-                    mem_unlocked[addr] = val;
+                    mem_unlocked[addr - 0x8000] = val;
                 }
             }
             0xA000..=0xDFFF => {
@@ -594,7 +589,7 @@ impl CentralProcessingUnit {
                     *mem_unlocked = val;
                 }
             }
-            _ => {}
+            _ => self.memory[addr] = val,
         }
     }
     fn get_memory(&self, addr: usize) -> u8 {
@@ -603,7 +598,7 @@ impl CentralProcessingUnit {
             0x8000..=0x9FFF => {
                 let mutex = self.vram.try_lock();
                 if let Ok(mem_unlocked) = mutex {
-                    mem_unlocked[addr]
+                    mem_unlocked[addr - 0x8000]
                 } else {
                     0xFF
                 }
@@ -666,7 +661,7 @@ impl CentralProcessingUnit {
                     0xFF
                 }
             }
-            _ => 0xFF,
+            _ => self.memory[addr],
         }
     }
     fn add_set_flags(&mut self, val1: &u16, val2: &u16, z: bool, h: bool, c: bool) {
@@ -704,17 +699,17 @@ impl CentralProcessingUnit {
             "{}",
             format!("Unrecognized command {:X} at ld_reg_16!", command)
         );
-        "FAIL".to_string()
     }
-    fn nop(&mut self, command: u8) -> String {
+    fn nop(&mut self, _command: u8) -> String {
+        self.pc += 1;
         "NOP".to_string()
     }
-    fn stop(&mut self, command: u8) -> String {
+    fn stop(&mut self, _command: u8) -> String {
         "STOP".to_string()
     }
     fn ld_reg_16(&mut self, command: u8) -> String {
-        let high_byte = self.get_memory((self.pc + 1) as usize);
-        let low_byte = self.get_memory((self.pc + 2) as usize);
+        let low_byte = self.get_memory((self.pc + 1) as usize);
+        let high_byte = self.get_memory((self.pc + 2) as usize);
         let code = match command {
             0x01 => {
                 self.regs[REG_B] = high_byte;
@@ -732,8 +727,8 @@ impl CentralProcessingUnit {
                 format!("LD rHL {:X}", combine_bytes(high_byte, low_byte))
             }
             0x31 => {
-                self.sp = (high_byte << 8) as u16 + low_byte as u16;
-                format!("LD rSP {:X}", combine_bytes(high_byte, low_byte))
+                self.sp = combine_bytes(high_byte, low_byte);
+                format!("LD rSP {:X}", self.sp)
             }
             _ => panic!(
                 "{}",
@@ -756,22 +751,22 @@ impl CentralProcessingUnit {
                 combine_bytes(self.regs[REG_D], self.regs[REG_E]),
             ),
             0x22 => {
-                let hl: u16 = combine_bytes(self.regs[REG_H], self.regs[REG_H]);
+                let mut hl: u16 = combine_bytes(self.regs[REG_H], self.regs[REG_H]);
                 let addr = hl;
-                hl.wrapping_add(1);
+                hl = hl.wrapping_add(1);
                 let (new_h, new_l) = split_u16(hl);
-                self.regs[REG_L] = new_h;
-                self.regs[REG_H] = new_l;
+                self.regs[REG_L] = new_l;
+                self.regs[REG_H] = new_h;
                 ("LD (rHL+) rA".to_string(), addr)
             }
             0x32 => {
-                let hl: u16 = combine_bytes(self.regs[REG_H], self.regs[REG_H]);
+                let mut hl: u16 = combine_bytes(self.regs[REG_H], self.regs[REG_H]);
                 let addr = hl;
-                hl.wrapping_sub(1);
+                hl = hl.wrapping_sub(1);
                 let (new_h, new_l) = split_u16(hl);
-                self.regs[REG_L] = new_h;
-                self.regs[REG_H] = new_l;
-                ("LD (rHL+) rA".to_string(), addr)
+                self.regs[REG_L] = new_l;
+                self.regs[REG_H] = new_h;
+                ("LD (rHL-) rA".to_string(), addr)
             }
             0xE0 => {
                 let adding = adding_1 as u16;
@@ -799,11 +794,9 @@ impl CentralProcessingUnit {
     }
     fn inc_reg_16(&mut self, command: u8) -> String {
         let code = if command == 0x33 {
-            self.sp.wrapping_add(1);
+            self.sp = self.sp.wrapping_add(1);
             "INC rSP".to_string()
         } else {
-            let mut r_low: usize = 9;
-            let mut r_high: usize = 9;
             let (r_low, r_high, code) = match command {
                 0x03 => (REG_C, REG_B, "INC rBC".to_string()),
                 0x13 => (REG_E, REG_D, "INC rDE".to_string()),
@@ -851,19 +844,19 @@ impl CentralProcessingUnit {
                 ("INC (rHL)".to_string(), val)
             }
             0x0C => {
-                self.regs[REG_C].wrapping_add(1);
+                self.regs[REG_C] = self.regs[REG_C].wrapping_add(1);
                 ("INC rC".to_string(), self.regs[REG_C])
             }
             0x1C => {
-                self.regs[REG_E].wrapping_add(1);
+                self.regs[REG_E] = self.regs[REG_E].wrapping_add(1);
                 ("INC rE".to_string(), self.regs[REG_E])
             }
             0x2C => {
-                self.regs[REG_L].wrapping_add(1);
+                self.regs[REG_L] = self.regs[REG_L].wrapping_add(1);
                 ("INC rL".to_string(), self.regs[REG_L])
             }
             0x3C => {
-                self.regs[REG_A].wrapping_add(1);
+                self.regs[REG_A] = self.regs[REG_A].wrapping_add(1);
                 ("INC rA".to_string(), self.regs[REG_A])
             }
             _ => panic!(
@@ -878,7 +871,6 @@ impl CentralProcessingUnit {
         code
     }
     fn dec_reg_8(&mut self, command: u8) -> String {
-        let val: u8 = 0;
         let (code, val) = match command {
             0x05 => {
                 self.regs[REG_B] = self.regs[REG_B].wrapping_sub(1);
@@ -900,19 +892,19 @@ impl CentralProcessingUnit {
                 ("DEC (rHL)".to_string(), val)
             }
             0x0D => {
-                self.regs[REG_C].wrapping_sub(1);
+                self.regs[REG_C] = self.regs[REG_C].wrapping_sub(1);
                 ("DEC rC".to_string(), self.regs[REG_C])
             }
             0x1D => {
-                self.regs[REG_E].wrapping_sub(1);
+                self.regs[REG_E] = self.regs[REG_E].wrapping_sub(1);
                 ("DEC rE".to_string(), self.regs[REG_E])
             }
             0x2D => {
-                self.regs[REG_L].wrapping_sub(1);
+                self.regs[REG_L] = self.regs[REG_L].wrapping_sub(1);
                 ("DEC rL".to_string(), self.regs[REG_L])
             }
             0x3D => {
-                self.regs[REG_A].wrapping_sub(1);
+                self.regs[REG_A] = self.regs[REG_A].wrapping_sub(1);
                 ("DEC rA".to_string(), self.regs[REG_A])
             }
             _ => panic!(
@@ -971,7 +963,7 @@ impl CentralProcessingUnit {
         self.pc += 2;
         code
     }
-    fn rot_a_left(&mut self, command: u8) -> String {
+    fn rot_a_left(&mut self, _command: u8) -> String {
         let bit = self.regs[REG_A] >> 7;
         self.regs[REG_A] <<= 1;
         self.regs[REG_A] += bit;
@@ -982,7 +974,7 @@ impl CentralProcessingUnit {
         self.pc += 1;
         "RLCA".to_string()
     }
-    fn rot_a_left_carry(&mut self, command: u8) -> String {
+    fn rot_a_left_carry(&mut self, _command: u8) -> String {
         let last_bit = self.regs[REG_A] >> 7;
         self.regs[REG_A] <<= 1;
         self.regs[REG_A] += self.c_flag;
@@ -993,7 +985,7 @@ impl CentralProcessingUnit {
         self.pc += 1;
         "RLA".to_string()
     }
-    fn daa(&mut self, command: u8) -> String {
+    fn daa(&mut self, _command: u8) -> String {
         if self.n_flag == 0 {
             // after an addition, adjust if (half-)carry occurred or if result is out of bounds
             if self.c_flag == 1 || self.regs[REG_A] > 0x99 {
@@ -1019,14 +1011,14 @@ impl CentralProcessingUnit {
         self.h_flag = 0;
         "DAA".to_string()
     }
-    fn scf(&mut self, command: u8) -> String {
+    fn scf(&mut self, _command: u8) -> String {
         self.n_flag = 0;
         self.h_flag = 0;
         self.c_flag = 1;
         self.pc += 1;
         "SCF".to_string()
     }
-    fn ld_addr_sp(&mut self, command: u8) -> String {
+    fn ld_addr_sp(&mut self, _command: u8) -> String {
         let addr_low = self.get_memory((self.pc + 1) as usize);
         let addr_high = self.get_memory((self.pc + 2) as usize);
         let addr = combine_bytes(addr_high, addr_low) as usize;
@@ -1038,12 +1030,13 @@ impl CentralProcessingUnit {
     }
     fn jr(&mut self, command: u8) -> String {
         let add = self.get_memory((self.pc + 1) as usize);
+        self.pc += 2;
         let (code, condition) = match command {
-            0x18 => ("JR".to_string(), true),
-            0x20 => ("JR NZ".to_string(), self.z_flag == 0),
-            0x28 => ("JR Z".to_string(), self.z_flag == 1),
-            0x30 => ("JR NC".to_string(), self.c_flag == 0),
-            0x38 => ("JR C".to_string(), self.c_flag == 1),
+            0x18 => (format!("JR {:X}", add).to_string(), true),
+            0x20 => (format!("JR NZ {:X}", add).to_string(), self.z_flag == 0),
+            0x28 => (format!("JR Z {:X}", add).to_string(), self.z_flag == 1),
+            0x30 => (format!("JR NC {:X}", add).to_string(), self.c_flag == 0),
+            0x38 => (format!("JR C {:X}", add).to_string(), self.c_flag == 1),
             _ => panic!("{}", format!("Unrecognized command {:X} at jr!", command)),
         };
         if condition {
@@ -1067,11 +1060,14 @@ impl CentralProcessingUnit {
                 combine_bytes(self.regs[REG_H], self.regs[REG_L]),
                 "ADD HL, HL".to_string(),
             ),
-            0x09 => (self.sp, "ADD HL, SP".to_string()),
+            0x39 => (self.sp, "ADD HL, SP".to_string()),
             _ => panic!("{}", format!("Unrecognized command {:X} at jr!", command)),
         };
         self.add_set_flags(&hl, &reg16, false, true, true);
         hl = hl.wrapping_add(reg16);
+        let (h_new, l_new) = split_u16(hl);
+        self.regs[REG_H] = h_new;
+        self.regs[REG_L] = l_new;
         self.n_flag = 0;
         self.pc += 1;
         code
@@ -1091,17 +1087,17 @@ impl CentralProcessingUnit {
             0x2A => {
                 let hl_old: u16 = combine_bytes(self.regs[REG_H], self.regs[REG_L]);
                 let hl_new = hl_old.wrapping_add(1);
-                let (H_new, L_new) = split_u16(hl_new);
-                self.regs[REG_L] = L_new;
-                self.regs[REG_H] = H_new;
+                let (h_new, l_new) = split_u16(hl_new);
+                self.regs[REG_L] = l_new;
+                self.regs[REG_H] = h_new;
                 ("LD A (HL +)".to_string(), hl_old)
             }
             0x3A => {
                 let hl_old: u16 = combine_bytes(self.regs[REG_H], self.regs[REG_L]);
                 let hl_new = hl_old.wrapping_sub(1);
-                let (H_new, L_new) = split_u16(hl_new);
-                self.regs[REG_L] = L_new;
-                self.regs[REG_H] = H_new;
+                let (h_new, l_new) = split_u16(hl_new);
+                self.regs[REG_L] = l_new;
+                self.regs[REG_H] = h_new;
                 ("LD A (HL -)".to_string(), hl_old)
             }
             0xF0 => {
@@ -1132,7 +1128,7 @@ impl CentralProcessingUnit {
     }
     fn dec_reg_16(&mut self, command: u8) -> String {
         let code = if command == 0x3B {
-            self.sp.wrapping_add(1);
+            self.sp = self.sp.wrapping_add(1);
             "DEC rSP".to_string()
         } else {
             let (r_low, r_high, code) = match command {
@@ -1160,7 +1156,7 @@ impl CentralProcessingUnit {
         self.pc += 1;
         code
     }
-    fn rot_a_right(&mut self, command: u8) -> String {
+    fn rot_a_right(&mut self, _command: u8) -> String {
         let bit = self.regs[REG_A] & 1;
         self.regs[REG_A] >>= 1;
         self.regs[REG_A] += bit << 7;
@@ -1172,7 +1168,7 @@ impl CentralProcessingUnit {
         self.pc += 1;
         "RRCA".to_string()
     }
-    fn rot_a_right_carry(&mut self, command: u8) -> String {
+    fn rot_a_right_carry(&mut self, _command: u8) -> String {
         let bit = self.regs[REG_A] & 1;
         self.regs[REG_A] >>= 1;
         self.regs[REG_A] += self.c_flag << 7;
@@ -1183,13 +1179,13 @@ impl CentralProcessingUnit {
         self.pc += 1;
         "RRA".to_string()
     }
-    fn cpl(&mut self, command: u8) -> String {
+    fn cpl(&mut self, _command: u8) -> String {
         self.n_flag = 0;
         self.h_flag = 0;
         self.regs[REG_A] = !self.regs[REG_A];
         "CPL".to_string()
     }
-    fn ccf(&mut self, command: u8) -> String {
+    fn ccf(&mut self, _command: u8) -> String {
         self.c_flag = if self.c_flag == 1 { 0 } else { 1 };
         self.n_flag = 0;
         self.h_flag = 0;
@@ -1200,16 +1196,16 @@ impl CentralProcessingUnit {
         let reg_1 = match command_high {
             0x4 => {
                 if command_low <= 0x7 {
-                    REG_A
-                } else {
                     REG_B
+                } else {
+                    REG_C
                 }
             }
             0x5 => {
                 if command_low <= 0x7 {
-                    REG_C
-                } else {
                     REG_D
+                } else {
+                    REG_E
                 }
             }
             0x6 => {
@@ -1295,10 +1291,11 @@ impl CentralProcessingUnit {
                 format!("Unrecognized command {:X} at ld_hl_addr_reg!", command)
             ),
         };
+        self.pc += 1;
         self.write_memory(addr, self.regs[reg]);
         format!("LD (rHL), r{}", self.reg_letter_map[reg])
     }
-    fn halt(&mut self, command: u8) -> String {
+    fn halt(&mut self, _command: u8) -> String {
         "HALT".to_string()
     }
     fn arthimetic_a(&mut self, command: u8) -> String {
@@ -1331,6 +1328,7 @@ impl CentralProcessingUnit {
             (additional_val, format!("({:X})", additional_val))
         };
         let (op_high, op_low) = split_byte(op_val);
+        let (a_high, a_low) = split_byte(self.regs[REG_A]);
         let command_high_mod = (command_high - 0x8) % 4;
         let (additional, second_half) = if command_low >= 0x8 {
             if command_high_mod != 0x3 {
@@ -1341,20 +1339,20 @@ impl CentralProcessingUnit {
         } else {
             (0, false)
         };
-        let code_first = if !second_half && command_high_mod == 0x3 {
+        let (code_first, zero_val) = if !second_half && command_high_mod == 0x3 {
             self.regs[REG_A] |= op_val;
             self.n_flag = 0;
             self.h_flag = 0;
             self.c_flag = 0;
-            "OR rA, ".to_string()
+            ("OR rA, ".to_string(), self.regs[REG_A])
         } else {
             match command_high_mod {
                 0x0 => {
-                    let carry_over = op_high + command_high + additional - 15;
+                    let carry_over = op_low as i8 + a_low as i8 + additional as i8 - 15;
                     if carry_over > 0 {
                         self.h_flag = 1;
                     }
-                    if op_low + command_low + carry_over >= 16 {
+                    if op_high as i8 + a_high as i8 + carry_over >= 16 {
                         self.c_flag = 1;
                     }
                     self.regs[REG_A] = self.regs[REG_A]
@@ -1362,33 +1360,34 @@ impl CentralProcessingUnit {
                         .wrapping_add(additional);
                     self.n_flag = 0;
                     if second_half {
-                        "ADC A, ".to_string()
+                        ("ADC A, ".to_string(), self.regs[REG_A])
                     } else {
-                        "ADD A, ".to_string()
+                        ("ADD A, ".to_string(), self.regs[REG_A])
                     }
                 }
                 0x1 | 0x3 => {
-                    let carry_over = command_high - (op_high + additional);
+                    let carry_over = a_low as i8 - (op_low as i8 + additional as i8);
                     if carry_over < 0 {
                         self.h_flag = 1;
                     }
-                    if command_low - op_low + carry_over < 0 {
+                    if a_high as i8 - op_high as i8 + carry_over < 0 {
                         self.c_flag = 1;
                     }
+                    let new_a = self.regs[REG_A]
+                        .wrapping_sub(op_val)
+                        .wrapping_sub(additional);
                     if !second_half {
-                        self.regs[REG_A] = self.regs[REG_A]
-                            .wrapping_sub(op_val)
-                            .wrapping_sub(additional);
+                        self.regs[REG_A] = new_a;
                     }
                     self.regs[5] |= 1 << 6;
                     if command_high_mod == 0x1 {
                         if second_half {
-                            "SBC A, ".to_string()
+                            ("SBC A, ".to_string(), self.regs[REG_A])
                         } else {
-                            "SUB A, ".to_string()
+                            ("SUB A, ".to_string(), self.regs[REG_A])
                         }
                     } else {
-                        "CP A, ".to_string()
+                        ("CP A, ".to_string(), new_a)
                     }
                 }
                 0x2 => {
@@ -1397,12 +1396,12 @@ impl CentralProcessingUnit {
                         self.n_flag = 0;
                         self.h_flag = 0;
                         self.c_flag = 0;
-                        "XOR A, ".to_string()
+                        ("XOR A, ".to_string(), self.regs[REG_A])
                     } else {
                         self.regs[REG_A] &= op_val;
                         self.n_flag = 0;
                         self.c_flag = 0;
-                        "AND A, ".to_string()
+                        ("AND A, ".to_string(), self.regs[REG_A])
                     }
                 }
                 _ => panic!(
@@ -1414,7 +1413,7 @@ impl CentralProcessingUnit {
                 ),
             }
         };
-        if self.regs[REG_A] == 0 {
+        if zero_val == 0 {
             self.z_flag = 1;
         }
         self.pc += 1;
@@ -1467,28 +1466,27 @@ impl CentralProcessingUnit {
         }
     }
     fn pop(&mut self, command: u8) -> String {
-        let [low_val, high_val] = self.pop_stack();
+        let [first_val, second_val] = self.pop_stack();
         self.pc += 1;
-        self.sp += 2;
         match command {
-            0xC2 => {
-                self.regs[REG_C] = low_val;
-                self.regs[REG_B] = high_val;
+            0xC1 => {
+                self.regs[REG_C] = first_val;
+                self.regs[REG_B] = second_val;
                 "POP BC".to_string()
             }
-            0xD2 => {
-                self.regs[REG_E] = low_val;
-                self.regs[REG_D] = high_val;
+            0xD1 => {
+                self.regs[REG_E] = first_val;
+                self.regs[REG_D] = second_val;
                 "POP DE".to_string()
             }
-            0xE2 => {
-                self.regs[REG_L] = low_val;
-                self.regs[REG_H] = high_val;
+            0xE1 => {
+                self.regs[REG_L] = first_val;
+                self.regs[REG_H] = second_val;
                 "POP HL".to_string()
             }
-            0xF2 => {
-                self.write_f(low_val);
-                self.regs[REG_A] = high_val;
+            0xF1 => {
+                self.write_f(first_val);
+                self.regs[REG_A] = second_val;
                 "POP AF".to_string()
             }
             _ => panic!("{}", format!("Unrecognized command {:X} at pop!", command)),
@@ -1497,10 +1495,10 @@ impl CentralProcessingUnit {
     fn push(&mut self, command: u8) -> String {
         self.pc += 1;
         let (high_val, low_val, code) = match command {
-            0xC2 => (self.regs[REG_B], self.regs[REG_C], "PUSH rBC".to_string()),
-            0xD2 => (self.regs[REG_D], self.regs[REG_E], "PUSH rDE".to_string()),
-            0xE2 => (self.regs[REG_H], self.regs[REG_L], "PUSH rHL".to_string()),
-            0xF2 => (self.regs[REG_A], self.get_f(), "PUSH rAF".to_string()),
+            0xC5 => (self.regs[REG_B], self.regs[REG_C], "PUSH rBC".to_string()),
+            0xD5 => (self.regs[REG_D], self.regs[REG_E], "PUSH rDE".to_string()),
+            0xE5 => (self.regs[REG_H], self.regs[REG_L], "PUSH rHL".to_string()),
+            0xF5 => (self.regs[REG_A], self.get_f(), "PUSH rAF".to_string()),
             _ => panic!("{}", format!("Unrecognized command {:X} at push!", command)),
         };
         self.push_stack(high_val, low_val);
@@ -1510,8 +1508,8 @@ impl CentralProcessingUnit {
         let addr_low = self.get_memory((self.pc + 1) as usize);
         let addr_high = self.get_memory((self.pc + 2) as usize);
         let addr = combine_bytes(addr_high, addr_low);
-        let (pc_high, pc_low) = split_u16(self.pc);
         self.pc += 3;
+        let (pc_high, pc_low) = split_u16(self.pc);
         match command {
             0xC4 => {
                 if self.z_flag == 0 {
@@ -1585,7 +1583,7 @@ impl CentralProcessingUnit {
         };
         format!("{}({:X})", code, addr)
     }
-    fn add_sp_i8(&mut self, command: u8) -> String {
+    fn add_sp_i8(&mut self, _command: u8) -> String {
         let val = self.get_memory((self.pc + 1) as usize);
         self.sp = self.sp.wrapping_add((val as i8) as u16);
         self.sp = if (val as i8) < 0 {
@@ -1615,7 +1613,7 @@ impl CentralProcessingUnit {
         self.pc += 2;
         format!("ADD SP, {:X}", val)
     }
-    fn ld_hl_sp_i8(&mut self, command: u8) -> String {
+    fn ld_hl_sp_i8(&mut self, _command: u8) -> String {
         let val = self.get_memory((self.pc + 1) as usize);
         let (hl_val_high, hl_val_low) = split_u16(self.sp.wrapping_add((val as i8) as u16));
         self.regs[REG_H] = hl_val_high;
@@ -1623,19 +1621,73 @@ impl CentralProcessingUnit {
         self.pc += 2;
         format!("LD HL, SP + {:X}", val)
     }
-    fn ld_sp_hl(&mut self, command: u8) -> String {
+    fn ld_sp_hl(&mut self, _command: u8) -> String {
         self.sp = combine_bytes(self.regs[REG_H], self.regs[REG_L]);
         self.pc += 1;
         "LD SP, HL".to_string()
     }
-    fn ei(&mut self, command: u8) -> String {
+    fn ei(&mut self, _command: u8) -> String {
         self.reenable_interrupts = true;
         self.pc += 1;
         "EI".to_string()
     }
-    fn di(&mut self, command: u8) -> String {
+    fn di(&mut self, _command: u8) -> String {
         self.reenable_interrupts = false;
         self.pc += 1;
         "DI".to_string()
+    }
+    fn cb(&mut self, _command: u8) -> String {
+        let mut addr_val_ref = 0;
+
+        let cb_command = self.get_memory((self.pc + 1) as usize);
+        let (cb_command_high, cb_command_low) = split_byte(cb_command);
+        let cb_command_low_second_half = cb_command_low >= 0x8;
+        let bit_num = if cb_command_low_second_half {
+            (cb_command_high % 4) * 2 + 1
+        } else {
+            (cb_command_high % 4)
+        };
+
+        let (reg, code) = match cb_command_low % 8 {
+            0x0 => (&mut self.regs[REG_B], "rB"),
+            0x1 => (&mut self.regs[REG_C], "rC"),
+            0x2 => (&mut self.regs[REG_D], "rD"),
+            0x3 => (&mut self.regs[REG_E], "rE"),
+            0x4 => (&mut self.regs[REG_H], "rH"),
+            0x5 => (&mut self.regs[REG_L], " rL"),
+            0x6 => {
+                addr_val_ref =
+                    self.get_memory(combine_bytes(self.regs[REG_H], self.regs[REG_L]) as usize);
+                (&mut addr_val_ref, "(rHL)")
+            }
+
+            0x7 => (&mut self.regs[REG_A], "rA"),
+            _ => panic!(
+                "{}",
+                format!("Unrecognized subcommand {:X} at CB!", cb_command)
+            ),
+        };
+        let command_str = match cb_command_high {
+            1 => {
+                let bit_7 = (*reg >> 7) & 1;
+                *reg <<= 1;
+                *reg += self.c_flag;
+                self.c_flag = bit_7;
+                self.z_flag = if *reg == 0 { 1 } else { 0 };
+                "RL".to_string()
+            }
+            4..=7 => {
+                self.z_flag = (*reg >> bit_num) & 1;
+                self.n_flag = 0;
+                self.h_flag = 1;
+                format!("BIT {}", bit_num)
+            }
+            _ => panic!(
+                "{}",
+                format!("Unrecognized subcommand {:X} at CB!", cb_command)
+            ),
+        };
+        self.pc += 2;
+        format!("{} {}", command_str, code)
     }
 }

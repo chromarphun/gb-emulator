@@ -1,0 +1,28 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Emulator Debug",
+            "program": "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\target\\debug\\gb-emulator.exe",
+            "args": [],
+            "sourceLanguages": [
+                "rust"
+            ]
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Other Debug",
+            "program": "C:\\Users\\chrom\\Documents\\Rust\\cargo-testing\\target\\debug\\cargo-testing.exe",
+            "args": [],
+            "sourceLanguages": [
+                "rust"
+            ]
+        }
+    ]
+}
