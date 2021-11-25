@@ -45,21 +45,20 @@ fn main() {
         interrupt_enable,
         interrupt_flag,
     );
-    cpu.run();
-    // let mut ppu = PPU::PictureProcessingUnit::new(
-    //     lcdc_ppu,
-    //     stat_ppu,
-    //     vram_ppu,
-    //     scy_ppu,
-    //     scx_ppu,
-    //     ly_ppu,
-    //     lyc_ppu,
-    //     wy_ppu,
-    //     wx_ppu,
-    //     bgp_ppu,
-    //     interrupt_flag_ppu,
-    // );
-    // let cpu_handle = thread::spawn(move || cpu.run());
-    // ppu.run();
-    // cpu_handle.join().unwrap();
+    let mut ppu = PPU::PictureProcessingUnit::new(
+        lcdc_ppu,
+        stat_ppu,
+        vram_ppu,
+        scy_ppu,
+        scx_ppu,
+        ly_ppu,
+        lyc_ppu,
+        wy_ppu,
+        wx_ppu,
+        bgp_ppu,
+        interrupt_flag_ppu,
+    );
+    let cpu_handle = thread::spawn(move || cpu.run());
+    ppu.run();
+    cpu_handle.join().unwrap();
 }

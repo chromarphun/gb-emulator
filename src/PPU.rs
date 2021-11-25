@@ -9,10 +9,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 const COLOR_MAP: [Color; 4] = [
-    Color::RGB(15, 56, 15),
-    Color::RGB(48, 98, 48),
-    Color::RGB(139, 172, 15),
     Color::RGB(155, 188, 15),
+    Color::RGB(139, 172, 15),
+    Color::RGB(48, 98, 48),
+    Color::RGB(15, 56, 15),
 ];
 
 const TILES_PER_ROW: usize = 32;
@@ -112,6 +112,7 @@ impl PictureProcessingUnit {
     }
     pub fn run(&mut self) {
         loop {
+            let start = Instant::now();
             let mut now = Instant::now();
             //PIXEL DRAWING
             for row in 0..SCREEN_PX_HEIGHT {
@@ -144,10 +145,10 @@ impl PictureProcessingUnit {
                     };
                     let bgp = *self.bgp.lock().unwrap() as usize;
                     let color_indexes: [usize; 4] = [
-                        (bgp >> 6) & 0b11,
-                        (bgp >> 4) & 0b11,
-                        (bgp >> 2) & 0b11,
                         (bgp >> 0) & 0b11,
+                        (bgp >> 2) & 0b11,
+                        (bgp >> 4) & 0b11,
+                        (bgp >> 6) & 0b11,
                     ];
                     let (scx, scy) = {
                         (
@@ -155,6 +156,7 @@ impl PictureProcessingUnit {
                             *self.scy.lock().unwrap() as usize,
                         )
                     };
+                    let tile_data_flag = self.get_tile_data_flag();
                     let tilemap_start: usize = if self.get_tile_map_flag() == 0 {
                         6144
                     } else {
@@ -166,9 +168,8 @@ impl PictureProcessingUnit {
                     let mut px_within_row = column % BG_TILE_WIDTH;
                     while column < SCREEN_PX_WIDTH {
                         let tile_map_index = TILES_PER_ROW * (total_row / BG_TILE_HEIGHT) // getting to the right row for a tile
-                            * (total_column / BG_TILE_WIDTH); // getting to the right column for a tile
-
-                        let absolute_tile_index = if self.get_tile_data_flag() == 0 {
+                            + (total_column / BG_TILE_WIDTH); // getting to the right column for a tile
+                        let absolute_tile_index = if tile_data_flag == 1 {
                             vram[tilemap_start + tile_map_index as usize] as usize
                         } else {
                             let initial_index =
@@ -186,7 +187,7 @@ impl PictureProcessingUnit {
                         let most_sig_byte = vram[(tile_data_index + 1) as usize];
                         while px_within_row < BG_TILE_WIDTH && column < SCREEN_PX_WIDTH {
                             total_column = (scx + column) % BG_MAP_SIZE_PX;
-                            px_within_row = column % BG_TILE_WIDTH;
+
                             let bgp_index =
                                 ((((most_sig_byte >> (BG_TILE_WIDTH - px_within_row - 1)) & 1)
                                     << 1)
@@ -201,10 +202,13 @@ impl PictureProcessingUnit {
                             }
                             //self.canvas.present();
                             column += 1;
+                            px_within_row += 1;
                         }
+                        px_within_row = 0;
                     }
                     //spin while we're waiting for drawing pixel period to end
                     //vram is still locked!
+
                     while (now.elapsed().as_nanos()) < (DRAWING_DOTS as f64 * NANOS_PER_DOT) as u128
                     {
                     }
@@ -219,8 +223,10 @@ impl PictureProcessingUnit {
                 while (now.elapsed().as_nanos()) < (HBLANK_DOTS as f64 * NANOS_PER_DOT) as u128 {}
             }
             //VBLANK
-            now = Instant::now();
 
+            now = Instant::now();
+            // let cycles = (start.elapsed().as_nanos()) / NANOS_PER_DOT as u128;
+            // println!("{}", cycles);
             *self.interrupt_flag.lock().unwrap() |= 0b00001;
             if self.get_stat_vblank_int_flag() == 1 {
                 *self.interrupt_flag.lock().unwrap() |= 0b00010;
