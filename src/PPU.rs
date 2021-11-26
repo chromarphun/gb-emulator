@@ -112,7 +112,6 @@ impl PictureProcessingUnit {
     }
     pub fn run(&mut self) {
         loop {
-            let start = Instant::now();
             let mut now = Instant::now();
             //PIXEL DRAWING
             for row in 0..SCREEN_PX_HEIGHT {
@@ -179,7 +178,7 @@ impl PictureProcessingUnit {
 
                     let row_within_tile = total_row % BG_TILE_WIDTH;
 
-                    let mut column = 0;
+                    let mut column: i32 = 0;
 
                     for t in 0..21 {
                         let tile_map_index = starting_tile_map_index + t;
@@ -206,8 +205,8 @@ impl PictureProcessingUnit {
                             self.canvas
                                 .set_draw_color(COLOR_MAP[color_indexes[bgp_index]]);
                             self.canvas
-                                .draw_point(Point::new(column as i32, row as i32))
-                                .expect("Failure to draw");
+                                .draw_point(Point::new(column, row as i32))
+                                .expect("Failed drawing");
                             column += 1;
                         }
                         if t == 19 {
@@ -237,7 +236,7 @@ impl PictureProcessingUnit {
             //VBLANK
 
             now = Instant::now();
-            self.canvas.present();
+
             // let cycles = (start.elapsed().as_nanos()) / NANOS_PER_DOT as u128;
             // println!("{}", cycles);
             *self.interrupt_flag.lock().unwrap() |= 0b00001;
@@ -245,11 +244,22 @@ impl PictureProcessingUnit {
                 *self.interrupt_flag.lock().unwrap() |= 0b00010;
             }
             while (now.elapsed().as_nanos()) < (ROW_DOTS as f64 * NANOS_PER_DOT) as u128 {}
+            now = Instant::now();
             *self.ly.lock().unwrap() += 1;
 
-            for _ in 0..9 {
-                now = Instant::now();
+            while (now.elapsed().as_nanos()) < (ROW_DOTS as f64 * NANOS_PER_DOT) as u128 {}
+
+            now = Instant::now();
+            *self.ly.lock().unwrap() += 1;
+
+            self.canvas.present();
+
+            let iterations: i32 =
+                8 - (now.elapsed().as_nanos() / ((NANOS_PER_DOT * ROW_DOTS as f64) as u128)) as i32;
+
+            for _ in 0..iterations {
                 while (now.elapsed().as_nanos()) < (ROW_DOTS as f64 * NANOS_PER_DOT) as u128 {}
+                now = Instant::now();
                 *self.ly.lock().unwrap() += 1;
             }
         }
