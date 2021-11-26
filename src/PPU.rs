@@ -112,6 +112,7 @@ impl PictureProcessingUnit {
     }
     pub fn run(&mut self) {
         loop {
+            let start_time = Instant::now();
             let mut now = Instant::now();
             //PIXEL DRAWING
             for row in 0..SCREEN_PX_HEIGHT {
@@ -254,13 +255,9 @@ impl PictureProcessingUnit {
 
             self.canvas.present();
 
-            let iterations: i32 =
-                8 - (now.elapsed().as_nanos() / ((NANOS_PER_DOT * ROW_DOTS as f64) as u128)) as i32;
-
-            for _ in 0..iterations {
-                while (now.elapsed().as_nanos()) < (ROW_DOTS as f64 * NANOS_PER_DOT) as u128 {}
-                now = Instant::now();
-                *self.ly.lock().unwrap() += 1;
+            while (start_time.elapsed().as_nanos()) < (TOTAL_DOTS as f64 * NANOS_PER_DOT) as u128 {
+                *self.ly.lock().unwrap() =
+                    ((start_time.elapsed().as_nanos() / NANOS_PER_DOT as u128 - 65664) / 10) as u8;
             }
         }
     }
