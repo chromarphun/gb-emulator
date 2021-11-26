@@ -2,9 +2,6 @@ use sdl2::event::Event;
 use sdl2::keyboard::Scancode;
 use sdl2::pixels::Color;
 use sdl2::rect::Point;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
-use sdl2::EventPump;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -21,7 +18,6 @@ const BG_TILE_WIDTH: usize = 8;
 const BG_TILE_HEIGHT: usize = 8;
 const BYTES_PER_TILE: usize = 16;
 const BYTES_PER_TILE_ROW: usize = 2;
-const SCREEN_PX_WIDTH: usize = 160;
 const SCREEN_PX_HEIGHT: usize = 144;
 const VRAM_BLOCK_SIZE: usize = 128;
 const NANOS_PER_DOT: f64 = 238.4185791015625;
@@ -37,8 +33,6 @@ pub struct PictureProcessingUnit {
     lcdc: Arc<Mutex<u8>>,
     stat: Arc<Mutex<u8>>,
     vram: Arc<Mutex<[u8; 8192]>>,
-    canvas: Canvas<Window>,
-    event_pump: EventPump,
     scy: Arc<Mutex<u8>>,
     scx: Arc<Mutex<u8>>,
     ly: Arc<Mutex<u8>>,
@@ -63,22 +57,10 @@ impl PictureProcessingUnit {
         bgp: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
     ) -> PictureProcessingUnit {
-        let sdl_context = sdl2::init().unwrap();
-        let video_subsystem = sdl_context.video().unwrap();
-        let window = video_subsystem
-            .window("Gameboy Emulator", WINDOW_WIDTH, WINDOW_HEIGHT)
-            .position_centered()
-            .build()
-            .unwrap();
-
-        let canvas = window.into_canvas().build().unwrap();
-        let event_pump = sdl_context.event_pump().unwrap();
         PictureProcessingUnit {
             lcdc,
             stat,
             vram,
-            canvas,
-            event_pump,
             scy,
             scx,
             ly,
@@ -111,13 +93,21 @@ impl PictureProcessingUnit {
         (*self.stat.lock().unwrap() >> 3) & 1
     }
     pub fn run(&mut self) {
-        loop {
+        let sdl_context = sdl2::init().unwrap();
+        let video_subsystem = sdl_context.video().unwrap();
+        let window = video_subsystem
+            .window("Gameboy Emulator", WINDOW_WIDTH, WINDOW_HEIGHT)
+            .position_centered()
+            .build()
+            .unwrap();
+        let mut event_pump = sdl_context.event_pump().unwrap();
+        let mut canvas = window.into_canvas().build().unwrap();
+        'running: loop {
             let start_time = Instant::now();
-            let mut now = Instant::now();
             //PIXEL DRAWING
             for row in 0..SCREEN_PX_HEIGHT {
                 //OAM SCAN PERIOD
-                now = Instant::now();
+                let mut now = Instant::now();
                 if self.get_stat_oam_int_flag() == 1 {
                     *self.interrupt_flag.lock().unwrap() |= 0b00010;
                 }
@@ -127,17 +117,18 @@ impl PictureProcessingUnit {
                 //create context for vram lock to exist
                 {
                     now = Instant::now();
-                    {
-                        *self.ly.lock().unwrap() = row as u8;
-                        if *self.lyc.lock().unwrap() == row as u8 {
-                            *self.stat.lock().unwrap() |= 0b1000000;
-                            if self.get_stat_lyc_lc_int_flag() == 1 {
-                                *self.interrupt_flag.lock().unwrap() |= 0b00010;
-                            }
-                        } else {
-                            *self.stat.lock().unwrap() &= 0b0111111;
+
+                    *self.ly.lock().unwrap() = row as u8;
+                    if *self.lyc.lock().unwrap() == row as u8 {
+                        *self.stat.lock().unwrap() |= 0b1000000;
+                        if self.get_stat_lyc_lc_int_flag() == 1 {
+                            *self.interrupt_flag.lock().unwrap() |= 0b00010;
                         }
+                    } else {
+                        *self.stat.lock().unwrap() &= 0b0111111;
                     }
+                    let wx = self.wx.lock().unwrap();
+                    let wy = self.wy.lock().unwrap();
                     let vram = if self.get_lcd_enable_flag() == 1 {
                         *self.vram.lock().unwrap()
                     } else {
@@ -162,11 +153,11 @@ impl PictureProcessingUnit {
                     } else {
                         7168
                     };
-                    let total_row: usize = (scy + row) as usize % BG_MAP_SIZE_PX;
+                    let total_bg_row: usize = (scy + row) as usize % BG_MAP_SIZE_PX;
 
-                    let total_column = scx % BG_MAP_SIZE_PX;
+                    let total_bg_column = scx % BG_MAP_SIZE_PX;
 
-                    let px_within_row = total_column % BG_TILE_WIDTH;
+                    let px_within_row = total_bg_column % BG_TILE_WIDTH;
 
                     let extra_tile = px_within_row != 0;
 
@@ -174,10 +165,10 @@ impl PictureProcessingUnit {
 
                     let mut end_index = 8;
 
-                    let starting_tile_map_index = TILES_PER_ROW * (total_row / BG_TILE_HEIGHT)
-                        + (total_column / BG_TILE_WIDTH);
+                    let starting_tile_map_index = TILES_PER_ROW * (total_bg_row / BG_TILE_HEIGHT)
+                        + (total_bg_column / BG_TILE_WIDTH);
 
-                    let row_within_tile = total_row % BG_TILE_WIDTH;
+                    let row_within_tile = total_bg_row % BG_TILE_WIDTH;
 
                     let mut column: i32 = 0;
 
@@ -203,9 +194,8 @@ impl PictureProcessingUnit {
                                 << 1)
                                 + ((least_sig_byte >> (BG_TILE_WIDTH - pixel - 1)) & 1))
                                 as usize;
-                            self.canvas
-                                .set_draw_color(COLOR_MAP[color_indexes[bgp_index]]);
-                            self.canvas
+                            canvas.set_draw_color(COLOR_MAP[color_indexes[bgp_index]]);
+                            canvas
                                 .draw_point(Point::new(column, row as i32))
                                 .expect("Failed drawing");
                             column += 1;
@@ -231,12 +221,21 @@ impl PictureProcessingUnit {
                 if self.get_stat_hblank_int_flag() == 1 {
                     *self.interrupt_flag.lock().unwrap() |= 0b00010;
                 }
-
+                for event in event_pump.poll_iter() {
+                    match event {
+                        Event::Quit { .. }
+                        | Event::KeyDown {
+                            scancode: Some(Scancode::Escape),
+                            ..
+                        } => break 'running,
+                        _ => {}
+                    }
+                }
                 while (now.elapsed().as_nanos()) < (HBLANK_DOTS as f64 * NANOS_PER_DOT) as u128 {}
             }
             //VBLANK
 
-            now = Instant::now();
+            let mut now = Instant::now();
 
             // let cycles = (start.elapsed().as_nanos()) / NANOS_PER_DOT as u128;
             // println!("{}", cycles);
@@ -250,10 +249,9 @@ impl PictureProcessingUnit {
 
             while (now.elapsed().as_nanos()) < (ROW_DOTS as f64 * NANOS_PER_DOT) as u128 {}
 
-            now = Instant::now();
             *self.ly.lock().unwrap() += 1;
 
-            self.canvas.present();
+            canvas.present();
 
             while (start_time.elapsed().as_nanos()) < (TOTAL_DOTS as f64 * NANOS_PER_DOT) as u128 {
                 *self.ly.lock().unwrap() =
