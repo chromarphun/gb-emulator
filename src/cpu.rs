@@ -330,7 +330,6 @@ fn get_cycles_map() -> [u8; 256] {
 }
 pub struct CentralProcessingUnit {
     regs: [u8; 7],
-    reg_letter_map: [String; 7],
     pc: u16,
     sp: u16,
     cycle_modification: u8,
@@ -376,15 +375,6 @@ impl CentralProcessingUnit {
         interrupt_flag: Arc<Mutex<u8>>,
     ) -> CentralProcessingUnit {
         let regs = [0u8; 7];
-        let reg_letter_map = [
-            'A'.to_string(),
-            'B'.to_string(),
-            'C'.to_string(),
-            'D'.to_string(),
-            'E'.to_string(),
-            'H'.to_string(),
-            'L'.to_string(),
-        ];
         let pc: u16 = 0x0;
         let sp: u16 = 0xFFFE;
         let reenable_interrupts: bool = false;
@@ -400,7 +390,6 @@ impl CentralProcessingUnit {
         let debug_var: usize = 0;
         CentralProcessingUnit {
             regs,
-            reg_letter_map,
             pc,
             sp,
             cycle_modification,
@@ -498,7 +487,6 @@ impl CentralProcessingUnit {
             while (now.elapsed().as_nanos()) < (INTERRUPT_DOTS as f64 * NANOS_PER_DOT) as u128 {}
         } else {
             let command = self.get_memory(self.pc as usize) as usize;
-            let curr_pc = self.pc;
             self.function_map[command](self, command as u8);
             let cycles = if self.cycle_modification != 0 {
                 let val = self.cycle_modification;
@@ -597,6 +585,20 @@ impl CentralProcessingUnit {
                     *mem_unlocked = val;
                 }
             }
+
+            0xFF4A => {
+                let mutex = self.wy.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+
+            0xFF4B => {
+                let mutex = self.wx.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
             _ => self.memory[addr] = val,
         }
     }
@@ -669,6 +671,24 @@ impl CentralProcessingUnit {
                     0xFF
                 }
             }
+
+            0xFF4A => {
+                let mutex = self.wy.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+
+            0xFF4B => {
+                let mutex = self.wx.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
             _ => self.memory[addr],
         }
     }
@@ -687,21 +707,21 @@ impl CentralProcessingUnit {
             self.c_flag = if (val1 + val2) > CARRY_LIMIT { 1 } else { 0 };
         }
     }
-    fn sub_set_flags(&mut self, val1: u16, val2: u16, z: bool, h: bool, c: bool) {
-        if z {
-            self.z_flag = if (val1 - val2) == 0 { 1 } else { 0 };
-        }
-        if h {
-            self.h_flag = if (((val1 & 0xF) - (val2 & 0xF)) & 0x10) == 0x10 {
-                1
-            } else {
-                0
-            };
-        }
-        if c {
-            self.c_flag = if val1 < val2 { 1 } else { 0 };
-        }
-    }
+    // fn sub_set_flags(&mut self, val1: u16, val2: u16, z: bool, h: bool, c: bool) {
+    //     if z {
+    //         self.z_flag = if (val1 - val2) == 0 { 1 } else { 0 };
+    //     }
+    //     if h {
+    //         self.h_flag = if (((val1 & 0xF) - (val2 & 0xF)) & 0x10) == 0x10 {
+    //             1
+    //         } else {
+    //             0
+    //         };
+    //     }
+    //     if c {
+    //         self.c_flag = if val1 < val2 { 1 } else { 0 };
+    //     }
+    // }
     fn fail(&mut self, command: u8) {
         panic!(
             "{}",
@@ -1588,7 +1608,7 @@ impl CentralProcessingUnit {
         self.pc += 1;
     }
     fn cb(&mut self, _command: u8) {
-        let mut addr_val_ref = 0;
+        let mut addr_val_ref;
 
         let cb_command = self.get_memory((self.pc + 1) as usize);
         let (cb_command_high, cb_command_low) = split_byte(cb_command);
@@ -1599,39 +1619,37 @@ impl CentralProcessingUnit {
             cb_command_high % 4
         };
 
-        let (reg, code) = match cb_command_low % 8 {
-            0x0 => (&mut self.regs[REG_B], "rB"),
-            0x1 => (&mut self.regs[REG_C], "rC"),
-            0x2 => (&mut self.regs[REG_D], "rD"),
-            0x3 => (&mut self.regs[REG_E], "rE"),
-            0x4 => (&mut self.regs[REG_H], "rH"),
-            0x5 => (&mut self.regs[REG_L], " rL"),
+        let reg = match cb_command_low % 8 {
+            0x0 => &mut self.regs[REG_B],
+            0x1 => &mut self.regs[REG_C],
+            0x2 => &mut self.regs[REG_D],
+            0x3 => &mut self.regs[REG_E],
+            0x4 => &mut self.regs[REG_H],
+            0x5 => &mut self.regs[REG_L],
             0x6 => {
                 addr_val_ref =
                     self.get_memory(combine_bytes(self.regs[REG_H], self.regs[REG_L]) as usize);
-                (&mut addr_val_ref, "(rHL)")
+                &mut addr_val_ref
             }
 
-            0x7 => (&mut self.regs[REG_A], "rA"),
+            0x7 => &mut self.regs[REG_A],
             _ => panic!(
                 "{}",
                 format!("Unrecognized subcommand {:X} at CB!", cb_command)
             ),
         };
-        let command_str = match cb_command_high {
+        match cb_command_high {
             1 => {
                 let bit_7 = (*reg >> 7) & 1;
                 *reg <<= 1;
                 *reg += self.c_flag;
                 self.c_flag = bit_7;
                 self.z_flag = if *reg == 0 { 1 } else { 0 };
-                "RL".to_string()
             }
             4..=7 => {
                 self.z_flag = (*reg >> bit_num) & 1;
                 self.n_flag = 0;
                 self.h_flag = 1;
-                format!("BIT {}", bit_num)
             }
             _ => panic!(
                 "{}",

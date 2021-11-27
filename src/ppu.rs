@@ -71,11 +71,17 @@ impl PictureProcessingUnit {
             interrupt_flag,
         }
     }
-    fn get_tile_map_flag(&self) -> u8 {
+    fn get_bg_tile_map_flag(&self) -> u8 {
         (*self.lcdc.lock().unwrap() >> 3) & 1
+    }
+    fn get_win_tile_map_flag(&self) -> u8 {
+        (*self.lcdc.lock().unwrap() >> 6) & 1
     }
     fn get_tile_data_flag(&self) -> u8 {
         (*self.lcdc.lock().unwrap() >> 4) & 1
+    }
+    fn get_win_enable_flag(&self) -> u8 {
+        (*self.lcdc.lock().unwrap() >> 5) & 1
     }
     fn get_lcd_enable_flag(&self) -> u8 {
         (*self.lcdc.lock().unwrap() >> 7) & 1
@@ -105,6 +111,7 @@ impl PictureProcessingUnit {
         'running: loop {
             let start_time = Instant::now();
             //PIXEL DRAWING
+
             for row in 0..SCREEN_PX_HEIGHT {
                 //OAM SCAN PERIOD
                 let mut now = Instant::now();
@@ -117,7 +124,6 @@ impl PictureProcessingUnit {
                 //create context for vram lock to exist
                 {
                     now = Instant::now();
-
                     *self.ly.lock().unwrap() = row as u8;
                     if *self.lyc.lock().unwrap() == row as u8 {
                         *self.stat.lock().unwrap() |= 0b1000000;
@@ -127,8 +133,11 @@ impl PictureProcessingUnit {
                     } else {
                         *self.stat.lock().unwrap() &= 0b0111111;
                     }
-                    let wx = self.wx.lock().unwrap();
-                    let wy = self.wy.lock().unwrap();
+                    let wx = *self.wx.lock().unwrap() as usize;
+                    let wy = *self.wy.lock().unwrap() as usize;
+                    let tile_num_begin_window = (wx - 7) / BG_TILE_WIDTH;
+                    let window_activated = wy >= row && self.get_win_enable_flag() == 1;
+
                     let vram = if self.get_lcd_enable_flag() == 1 {
                         *self.vram.lock().unwrap()
                     } else {
@@ -148,7 +157,12 @@ impl PictureProcessingUnit {
                         )
                     };
                     let tile_data_flag = self.get_tile_data_flag();
-                    let tilemap_start: usize = if self.get_tile_map_flag() == 0 {
+                    let bg_tilemap_start: usize = if self.get_bg_tile_map_flag() == 0 {
+                        6144
+                    } else {
+                        7168
+                    };
+                    let win_tilemap_start: usize = if self.get_win_tile_map_flag() == 0 {
                         6144
                     } else {
                         7168
@@ -172,8 +186,13 @@ impl PictureProcessingUnit {
 
                     let mut column: i32 = 0;
 
-                    for t in 0..21 {
-                        let tile_map_index = starting_tile_map_index + t;
+                    for tile_num in 0..21 {
+                        let (tile_map_index, tilemap_start) =
+                            if window_activated && tile_num >= tile_num_begin_window {
+                                (tile_num, win_tilemap_start)
+                            } else {
+                                (starting_tile_map_index + tile_num, bg_tilemap_start)
+                            };
                         let absolute_tile_index = if tile_data_flag == 1 {
                             vram[tilemap_start + tile_map_index as usize] as usize
                         } else {
@@ -200,7 +219,7 @@ impl PictureProcessingUnit {
                                 .expect("Failed drawing");
                             column += 1;
                         }
-                        if t == 19 {
+                        if tile_num == 19 {
                             if extra_tile {
                                 end_index = extra_end_index;
                             } else {

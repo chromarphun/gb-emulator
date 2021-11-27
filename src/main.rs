@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::thread;
-mod CPU;
-mod PPU;
+mod cpu;
+mod ppu;
 
 fn main() {
     let lcdc = Arc::new(Mutex::new(0));
@@ -30,7 +30,7 @@ fn main() {
     let bgp_ppu = Arc::clone(&bgp);
     let interrupt_flag_ppu = Arc::clone(&interrupt_flag);
 
-    let mut cpu = CPU::CentralProcessingUnit::new(
+    let mut cpu_instance = cpu::CentralProcessingUnit::new(
         lcdc,
         stat,
         vram,
@@ -45,7 +45,7 @@ fn main() {
         interrupt_enable,
         interrupt_flag,
     );
-    let mut ppu = PPU::PictureProcessingUnit::new(
+    let mut ppu_instance = ppu::PictureProcessingUnit::new(
         lcdc_ppu,
         stat_ppu,
         vram_ppu,
@@ -58,7 +58,7 @@ fn main() {
         bgp_ppu,
         interrupt_flag_ppu,
     );
-    let cpu_handle = thread::spawn(move || cpu.run());
-    ppu.run();
+    let cpu_handle = thread::spawn(move || cpu_instance.run());
+    ppu_instance.run();
     cpu_handle.join().unwrap();
 }
