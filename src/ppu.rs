@@ -2,6 +2,8 @@ use sdl2::event::Event;
 use sdl2::keyboard::Scancode;
 use sdl2::pixels::Color;
 use sdl2::rect::Point;
+use std::cmp;
+use std::convert::TryInto;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -14,7 +16,7 @@ const COLOR_MAP: [Color; 4] = [
 
 const TILES_PER_ROW: usize = 32;
 const BG_MAP_SIZE_PX: usize = 256;
-const BG_TILE_WIDTH: usize = 8;
+const TILE_WIDTH: usize = 8;
 const BG_TILE_HEIGHT: usize = 8;
 const BYTES_PER_TILE: usize = 16;
 const BYTES_PER_TILE_ROW: usize = 2;
@@ -28,11 +30,18 @@ const ROW_DOTS: u16 = 456;
 const TOTAL_DOTS: u32 = 77520;
 const WINDOW_WIDTH: u32 = 160;
 const WINDOW_HEIGHT: u32 = 144;
+const BYTES_PER_OAM_ENTRY: usize = 4;
+const SPIRTES_IN_OAM: usize = 40;
+const OAM_Y_INDEX: usize = 0;
+const OAM_X_INDEX: usize = 1;
+const OAM_TILE_INDEX: usize = 2;
+const OAM_ATTRIBUTE_INDEX: usize = 3;
 
 pub struct PictureProcessingUnit {
     lcdc: Arc<Mutex<u8>>,
     stat: Arc<Mutex<u8>>,
     vram: Arc<Mutex<[u8; 8192]>>,
+    oam: Arc<Mutex<[u8; 160]>>,
     scy: Arc<Mutex<u8>>,
     scx: Arc<Mutex<u8>>,
     ly: Arc<Mutex<u8>>,
@@ -40,6 +49,8 @@ pub struct PictureProcessingUnit {
     wy: Arc<Mutex<u8>>,
     wx: Arc<Mutex<u8>>,
     bgp: Arc<Mutex<u8>>,
+    obp0: Arc<Mutex<u8>>,
+    obp1: Arc<Mutex<u8>>,
     interrupt_flag: Arc<Mutex<u8>>,
 }
 
@@ -48,6 +59,7 @@ impl PictureProcessingUnit {
         lcdc: Arc<Mutex<u8>>,
         stat: Arc<Mutex<u8>>,
         vram: Arc<Mutex<[u8; 8192]>>,
+        oam: Arc<Mutex<[u8; 160]>>,
         scy: Arc<Mutex<u8>>,
         scx: Arc<Mutex<u8>>,
         ly: Arc<Mutex<u8>>,
@@ -55,12 +67,15 @@ impl PictureProcessingUnit {
         wy: Arc<Mutex<u8>>,
         wx: Arc<Mutex<u8>>,
         bgp: Arc<Mutex<u8>>,
+        obp0: Arc<Mutex<u8>>,
+        obp1: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
     ) -> PictureProcessingUnit {
         PictureProcessingUnit {
             lcdc,
             stat,
             vram,
+            oam,
             scy,
             scx,
             ly,
@@ -68,6 +83,8 @@ impl PictureProcessingUnit {
             wy,
             wx,
             bgp,
+            obp0,
+            obp1,
             interrupt_flag,
         }
     }
@@ -82,6 +99,13 @@ impl PictureProcessingUnit {
     }
     fn get_win_enable_flag(&self) -> u8 {
         (*self.lcdc.lock().unwrap() >> 5) & 1
+    }
+    fn get_obj_size(&self) -> u8 {
+        if ((*self.lcdc.lock().unwrap() >> 2) & 1) == 1 {
+            16
+        } else {
+            8
+        }
     }
     fn get_lcd_enable_flag(&self) -> u8 {
         (*self.lcdc.lock().unwrap() >> 7) & 1
@@ -113,16 +137,37 @@ impl PictureProcessingUnit {
             //PIXEL DRAWING
 
             for row in 0..SCREEN_PX_HEIGHT {
-                //OAM SCAN PERIOD
                 let mut now = Instant::now();
-                if self.get_stat_oam_int_flag() == 1 {
-                    *self.interrupt_flag.lock().unwrap() |= 0b00010;
-                }
-
-                while (now.elapsed().as_nanos()) < (OAM_SCAN_DOTS as f64 * NANOS_PER_DOT) as u128 {}
-
-                //create context for vram lock to exist
+                //create context for vram/oam lock to exist
                 {
+                    //OAM SCAN PERIOD
+
+                    if self.get_stat_oam_int_flag() == 1 {
+                        *self.interrupt_flag.lock().unwrap() |= 0b00010;
+                    }
+                    let mut possible_sprites: Vec<[u8; 4]> = Vec::new();
+                    let oam = self.oam.lock().unwrap();
+                    let obj_length = self.get_obj_size();
+                    let mut sprite_num = 0;
+                    for i in 0..SPIRTES_IN_OAM {
+                        if (oam[i * BYTES_PER_OAM_ENTRY] > (row + 16) as u8)
+                            && (oam[i * BYTES_PER_OAM_ENTRY] < (row + 16) as u8 + obj_length)
+                        {
+                            possible_sprites.push(
+                                oam[(i * BYTES_PER_OAM_ENTRY)..((i + 1) * BYTES_PER_OAM_ENTRY)]
+                                    .try_into()
+                                    .expect("Indexing error"),
+                            );
+                            sprite_num += 1;
+                            if sprite_num == 10 {
+                                break;
+                            }
+                        }
+                    }
+                    while (now.elapsed().as_nanos())
+                        < (OAM_SCAN_DOTS as f64 * NANOS_PER_DOT) as u128
+                    {}
+                    // DRAWOMG PERIOD
                     now = Instant::now();
                     *self.ly.lock().unwrap() = row as u8;
                     if *self.lyc.lock().unwrap() == row as u8 {
@@ -135,7 +180,7 @@ impl PictureProcessingUnit {
                     }
                     let wx = *self.wx.lock().unwrap() as usize;
                     let wy = *self.wy.lock().unwrap() as usize;
-                    let tile_num_begin_window = (wx - 7) / BG_TILE_WIDTH;
+                    let tile_num_begin_window = (wx - 7) / TILE_WIDTH;
                     let window_activated = wy >= row && self.get_win_enable_flag() == 1;
 
                     let vram = if self.get_lcd_enable_flag() == 1 {
@@ -171,21 +216,21 @@ impl PictureProcessingUnit {
 
                     let total_bg_column = scx % BG_MAP_SIZE_PX;
 
-                    let px_within_row = total_bg_column % BG_TILE_WIDTH;
+                    let mut px_within_row = total_bg_column % TILE_WIDTH;
 
                     let extra_tile = px_within_row != 0;
 
-                    let extra_end_index = BG_TILE_WIDTH - px_within_row;
+                    let extra_end_index = TILE_WIDTH - px_within_row;
 
                     let mut end_index = 8;
 
                     let starting_tile_map_index = TILES_PER_ROW * (total_bg_row / BG_TILE_HEIGHT)
-                        + (total_bg_column / BG_TILE_WIDTH);
+                        + (total_bg_column / TILE_WIDTH);
 
-                    let row_within_tile = total_bg_row % BG_TILE_WIDTH;
+                    let row_within_tile = total_bg_row % TILE_WIDTH;
 
                     let mut column: i32 = 0;
-
+                    let mut row_colors = [5u8; 160];
                     for tile_num in 0..21 {
                         let (tile_map_index, tilemap_start) =
                             if window_activated && tile_num >= tile_num_begin_window {
@@ -204,27 +249,73 @@ impl PictureProcessingUnit {
                                 initial_index
                             }
                         };
+
                         let tile_data_index = absolute_tile_index * BYTES_PER_TILE // getting to the starting byte
                         + row_within_tile * BYTES_PER_TILE_ROW; //getting to the row
                         let least_sig_byte = vram[tile_data_index as usize];
                         let most_sig_byte = vram[(tile_data_index + 1) as usize];
                         for pixel in px_within_row..end_index {
-                            let bgp_index = ((((most_sig_byte >> (BG_TILE_WIDTH - pixel - 1)) & 1)
+                            let bgp_index = ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1)
                                 << 1)
-                                + ((least_sig_byte >> (BG_TILE_WIDTH - pixel - 1)) & 1))
+                                + ((least_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1))
                                 as usize;
+                            row_colors[column as usize] = color_indexes[bgp_index] as u8;
                             canvas.set_draw_color(COLOR_MAP[color_indexes[bgp_index]]);
                             canvas
                                 .draw_point(Point::new(column, row as i32))
                                 .expect("Failed drawing");
                             column += 1;
-                        }
-                        if tile_num == 19 {
-                            if extra_tile {
-                                end_index = extra_end_index;
-                            } else {
-                                break;
+                            px_within_row = 0;
+                            if tile_num == 19 {
+                                if extra_tile {
+                                    end_index = extra_end_index;
+                                } else {
+                                    break;
+                                }
                             }
+                        }
+                    }
+                    let mut x_precendence = [200u8; 160];
+                    for sprite in possible_sprites {
+                        let row_within = row - sprite[OAM_Y_INDEX] as usize + 16;
+                        let bg_over_obj = (sprite[OAM_ATTRIBUTE_INDEX] >> 7) == 1;
+                        let tile_data_index = sprite[OAM_TILE_INDEX] as usize * BYTES_PER_TILE
+                            + row_within * BYTES_PER_TILE_ROW;
+                        let least_sig_byte = vram[tile_data_index];
+                        let most_sig_byte = vram[(tile_data_index + 1)];
+                        let palette = if (sprite[OAM_ATTRIBUTE_INDEX] >> 4) & 1 == 0 {
+                            *self.obp0.lock().unwrap() as usize
+                        } else {
+                            *self.obp1.lock().unwrap() as usize
+                        };
+                        let color_indexes: [usize; 4] = [
+                            (palette >> 0) & 0b11,
+                            (palette >> 2) & 0b11,
+                            (palette >> 4) & 0b11,
+                            (palette >> 6) & 0b11,
+                        ];
+                        let x_end = sprite[OAM_X_INDEX];
+                        let x_start = cmp::max(0, x_end - 8);
+                        let mut index = TILE_WIDTH - (x_end - x_start) as usize;
+                        for x in x_start..x_end {
+                            let color_index = ((((most_sig_byte >> (TILE_WIDTH - index - 1)) & 1)
+                                << 1)
+                                + ((least_sig_byte >> (TILE_WIDTH - index - 1)) & 1))
+                                as usize;
+                            let draw_color = color_indexes[color_index];
+                            if (x_start < x_precendence[x as usize]) //no obj with priority 
+                                & (draw_color != 0)
+                            // not transparent
+                            {
+                                x_precendence[x as usize] = x_start;
+                                if !bg_over_obj || (row_colors[column as usize] == 0) {
+                                    canvas.set_draw_color(COLOR_MAP[draw_color]);
+                                    canvas
+                                        .draw_point(Point::new(x as i32, row as i32))
+                                        .expect("Failed drawing");
+                                }
+                            }
+                            index += 1;
                         }
                     }
                     //spin while we're waiting for drawing pixel period to end

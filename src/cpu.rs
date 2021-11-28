@@ -309,23 +309,18 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8); 256] {
 
 fn get_cycles_map() -> [u8; 256] {
     [
-        //0x0
-        04, 12, 08, 08, 04, 04, 08, 04, 20, 08, 08, 08, 04, 04, 08, 04, //0x1
-        04, 12, 08, 08, 04, 04, 08, 04, 12, 08, 08, 08, 04, 04, 08, 04, //0x2
-        08, 12, 08, 08, 04, 04, 08, 04, 08, 08, 08, 08, 04, 04, 08, 04, //0x3
-        08, 12, 08, 08, 12, 12, 12, 04, 08, 08, 08, 08, 04, 04, 08, 04, //0x4
-        04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, //0x5
-        04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, //0x6
-        04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, //0x7
-        08, 08, 08, 08, 08, 08, 04, 08, 04, 04, 04, 04, 04, 04, 08, 04, //0x8
-        04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, //0x9
-        04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, //0xA
-        04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, //0xB
-        04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, //0xC
-        08, 12, 12, 16, 12, 16, 08, 16, 08, 16, 12, 04, 12, 24, 08, 16, //0xD
-        08, 12, 12, 00, 12, 16, 08, 16, 08, 16, 12, 00, 12, 00, 08, 16, //0xE
-        12, 12, 08, 00, 00, 16, 08, 16, 16, 04, 16, 00, 00, 00, 08, 16, //0xF
-        12, 12, 08, 04, 00, 16, 08, 16, 12, 08, 16, 04, 00, 00, 08, 16,
+        04, 12, 08, 08, 04, 04, 08, 04, 20, 08, 08, 08, 04, 04, 08, 04, 04, 12, 08, 08, 04, 04, 08,
+        04, 12, 08, 08, 08, 04, 04, 08, 04, 08, 12, 08, 08, 04, 04, 08, 04, 08, 08, 08, 08, 04, 04,
+        08, 04, 08, 12, 08, 08, 12, 12, 12, 04, 08, 08, 08, 08, 04, 04, 08, 04, 04, 04, 04, 04, 04,
+        04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04,
+        04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 08, 08, 08,
+        08, 08, 08, 04, 08, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04,
+        04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04,
+        04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04,
+        04, 04, 04, 04, 04, 04, 08, 04, 08, 12, 12, 16, 12, 16, 08, 16, 08, 16, 12, 04, 12, 24, 08,
+        16, 08, 12, 12, 00, 12, 16, 08, 16, 08, 16, 12, 00, 12, 00, 08, 16, 12, 12, 08, 00, 00, 16,
+        08, 16, 16, 04, 16, 00, 00, 00, 08, 16, 12, 12, 08, 04, 00, 16, 08, 16, 12, 08, 16, 04, 00,
+        00, 08, 16,
     ]
 }
 pub struct CentralProcessingUnit {
@@ -614,7 +609,7 @@ impl CentralProcessingUnit {
                 }
             }
             0xA000..=0xDFFF => self.memory[addr],
-            0xFe00..=0xFE9F => 0xFF,
+            0xFE00..=0xFE9F => 0xFF,
             0xFF40 => {
                 let mutex = self.lcdc.try_lock();
                 if let Ok(mem_unlocked) = mutex {
@@ -793,20 +788,17 @@ impl CentralProcessingUnit {
             0xE0 => {
                 //LD (FF00 + XX) A
                 let adding = adding_1 as u16;
-                let addr = 0xFF00 + adding;
                 self.pc += 1;
-                addr
+                0xFF00 + adding
             }
             0xE2 => {
                 // LD (FF00 + C) A
-                let addr = 0xFF00 + self.regs[REG_C] as u16;
-                addr
+                0xFF00 + self.regs[REG_C] as u16
             }
             0xEA => {
                 //LD (XX) A
-                let addr = combine_bytes(adding_2, adding_1);
                 self.pc += 2;
-                addr
+                combine_bytes(adding_2, adding_1)
             }
             _ => panic!(
                 "{}",
@@ -1302,8 +1294,7 @@ impl CentralProcessingUnit {
                 0x5 => self.regs[REG_L],
                 0x6 => {
                     let addr = combine_bytes(self.regs[REG_H], self.regs[REG_L]) as usize;
-                    let val = self.get_memory(addr);
-                    val
+                    self.get_memory(addr)
                 }
                 0x7 => self.regs[REG_A],
                 _ => panic!(
@@ -1375,17 +1366,14 @@ impl CentralProcessingUnit {
                     if second_half {
                         //XOR A
                         self.regs[REG_A] ^= op_val;
-                        self.n_flag = 0;
                         self.h_flag = 0;
-                        self.c_flag = 0;
-                        self.regs[REG_A]
                     } else {
                         //AND A
                         self.regs[REG_A] &= op_val;
-                        self.n_flag = 0;
-                        self.c_flag = 0;
-                        self.regs[REG_A]
                     }
+                    self.n_flag = 0;
+                    self.c_flag = 0;
+                    self.regs[REG_A]
                 }
                 _ => panic!(
                     "{}",
@@ -1639,17 +1627,84 @@ impl CentralProcessingUnit {
             ),
         };
         match cb_command_high {
+            0x0 => {
+                let moved_bit = if cb_command_low_second_half {
+                    let bit_0 = *reg & 1;
+                    *reg >>= 1;
+                    *reg += bit_0 << 7;
+                    bit_0
+                } else {
+                    let bit_7 = (*reg >> 7) & 1;
+                    *reg <<= 1;
+                    *reg += bit_7;
+                    bit_7
+                };
+
+                self.c_flag = moved_bit;
+                self.h_flag = 0;
+                self.n_flag = 0;
+                self.z_flag = if *reg == 0 { 1 } else { 0 };
+            }
             1 => {
-                let bit_7 = (*reg >> 7) & 1;
-                *reg <<= 1;
-                *reg += self.c_flag;
-                self.c_flag = bit_7;
+                let moved_bit = if cb_command_low_second_half {
+                    let bit_0 = *reg & 1;
+                    *reg >>= 1;
+                    *reg += self.c_flag << 7;
+                    bit_0
+                } else {
+                    let bit_7 = (*reg >> 7) & 1;
+                    *reg <<= 1;
+                    *reg += self.c_flag;
+                    bit_7
+                };
+
+                self.c_flag = moved_bit;
+                self.h_flag = 0;
+                self.n_flag = 0;
+                self.z_flag = if *reg == 0 { 1 } else { 0 };
+            }
+            2 => {
+                let moved_bit = if cb_command_low_second_half {
+                    let bit_7 = (*reg >> 7) & 1;
+                    let bit_0 = *reg & 1;
+                    *reg >>= 1;
+                    *reg += (bit_7 << 7);
+                    bit_0
+                } else {
+                    let bit_7 = (*reg >> 7) & 1;
+                    *reg <<= 1;
+                    bit_7
+                };
+                self.c_flag = moved_bit;
+                self.h_flag = 0;
+                self.n_flag = 0;
+                self.z_flag = if *reg == 0 { 1 } else { 0 };
+            }
+            0x3 => {
+                if cb_command_low_second_half {
+                    let (high_nib, low_nib) = split_byte(*reg);
+                    *reg = (low_nib << 4) + high_nib;
+                    self.c_flag = 0;
+                    self.h_flag = 0;
+                    self.n_flag = 0;
+                } else {
+                    self.c_flag = *reg & 1;
+                    *reg >>= 1;
+                    self.h_flag = 0;
+                    self.n_flag = 0;
+                }
                 self.z_flag = if *reg == 0 { 1 } else { 0 };
             }
             4..=7 => {
                 self.z_flag = (*reg >> bit_num) & 1;
                 self.n_flag = 0;
                 self.h_flag = 1;
+            }
+            0x8..=0xB => {
+                *reg &= 255 - 2u8.pow(bit_num as u32);
+            }
+            0xC..=0xF => {
+                *reg |= 1 << bit_num;
             }
             _ => panic!(
                 "{}",
