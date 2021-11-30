@@ -51,6 +51,7 @@ pub struct PictureProcessingUnit {
     bgp: Arc<Mutex<u8>>,
     obp0: Arc<Mutex<u8>>,
     obp1: Arc<Mutex<u8>>,
+    p1: Arc<Mutex<u8>>,
     interrupt_flag: Arc<Mutex<u8>>,
 }
 
@@ -69,6 +70,7 @@ impl PictureProcessingUnit {
         bgp: Arc<Mutex<u8>>,
         obp0: Arc<Mutex<u8>>,
         obp1: Arc<Mutex<u8>>,
+        p1: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
     ) -> PictureProcessingUnit {
         PictureProcessingUnit {
@@ -86,6 +88,7 @@ impl PictureProcessingUnit {
             obp0,
             obp1,
             interrupt_flag,
+            p1,
         }
     }
     fn get_bg_tile_map_flag(&self) -> u8 {
@@ -331,6 +334,9 @@ impl PictureProcessingUnit {
                 if self.get_stat_hblank_int_flag() == 1 {
                     *self.interrupt_flag.lock().unwrap() |= 0b00010;
                 }
+                let prev_p1 = *self.p1.lock().unwrap();
+                let mut directional_keys = 0xF;
+                let mut a_b_sel_start_keys = 0xF;
                 for event in event_pump.poll_iter() {
                     match event {
                         Event::Quit { .. }
@@ -338,7 +344,55 @@ impl PictureProcessingUnit {
                             scancode: Some(Scancode::Escape),
                             ..
                         } => break 'running,
+                        Event::KeyDown {
+                            scancode: Some(Scancode::Z),
+                            ..
+                        } => a_b_sel_start_keys &= 0b0111,
+                        Event::KeyDown {
+                            scancode: Some(Scancode::X),
+                            ..
+                        } => a_b_sel_start_keys &= 0b1011,
+                        Event::KeyDown {
+                            scancode: Some(Scancode::A),
+                            ..
+                        } => a_b_sel_start_keys &= 0b1101,
+                        Event::KeyDown {
+                            scancode: Some(Scancode::S),
+                            ..
+                        } => a_b_sel_start_keys &= 0b1110,
+                        Event::KeyDown {
+                            scancode: Some(Scancode::Right),
+                            ..
+                        } => directional_keys &= 0b0111,
+                        Event::KeyDown {
+                            scancode: Some(Scancode::Left),
+                            ..
+                        } => directional_keys &= 0b1011,
+                        Event::KeyDown {
+                            scancode: Some(Scancode::Up),
+                            ..
+                        } => directional_keys &= 0b1101,
+                        Event::KeyDown {
+                            scancode: Some(Scancode::Down),
+                            ..
+                        } => directional_keys &= 0b1110,
                         _ => {}
+                    }
+                }
+                //create context for mutex to drop
+                {
+                    let mut p1 = self.p1.lock().unwrap();
+                    let p14 = (*p1 >> 4) & 1;
+                    let p15 = (*p1 >> 5) & 1;
+                    *p1 |= 0b110000;
+                    if p14 == 1 {
+                        *p1 |= directional_keys;
+                    }
+                    if p15 == 1 {
+                        *p1 |= a_b_sel_start_keys;
+                    }
+                    if ((prev_p1 | *p1) - *p1) & 0xF != 0 {
+                        *self.interrupt_flag.lock().unwrap() |= 1 << 4;
                     }
                 }
                 while (now.elapsed().as_nanos()) < (HBLANK_DOTS as f64 * NANOS_PER_DOT) as u128 {}

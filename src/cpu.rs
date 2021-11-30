@@ -333,9 +333,14 @@ pub struct CentralProcessingUnit {
     h_flag: u8,
     c_flag: u8,
     reenable_interrupts: bool,
+    disable_interrupts: bool,
     function_map: [fn(&mut CentralProcessingUnit, u8); 256],
     cycles_map: [u8; 256],
-    memory: [u8; 65536],
+    rom: Arc<Mutex<[u8; 2097152]>>,
+    external_ram: Arc<Mutex<[u8; 131072]>>,
+    internal_ram: Arc<Mutex<[u8; 8192]>>,
+    rom_bank: Arc<Mutex<usize>>,
+    ram_bank: Arc<Mutex<usize>>,
     lcdc: Arc<Mutex<u8>>,
     stat: Arc<Mutex<u8>>,
     vram: Arc<Mutex<[u8; 8192]>>,
@@ -349,12 +354,28 @@ pub struct CentralProcessingUnit {
     ime: Arc<Mutex<u8>>,
     interrupt_enable: Arc<Mutex<u8>>,
     interrupt_flag: Arc<Mutex<u8>>,
-    change_ime: bool,
+    p1: Arc<Mutex<u8>>,
+    div: Arc<Mutex<u8>>,
+    tima: Arc<Mutex<u8>>,
+    tma: Arc<Mutex<u8>>,
+    tac: Arc<Mutex<u8>>,
+    obp0: Arc<Mutex<u8>>,
+    obp1: Arc<Mutex<u8>>,
+    dma_transfer: Arc<Mutex<bool>>,
+    dma_register: Arc<Mutex<u8>>,
+    change_ime_true: bool,
+    change_ime_false: bool,
     debug_var: usize,
+    ram_enable: bool,
 }
 
 impl CentralProcessingUnit {
     pub fn new(
+        rom: Arc<Mutex<[u8; 2097152]>>,
+        external_ram: Arc<Mutex<[u8; 131072]>>,
+        internal_ram: Arc<Mutex<[u8; 8192]>>,
+        rom_bank: Arc<Mutex<usize>>,
+        ram_bank: Arc<Mutex<usize>>,
         lcdc: Arc<Mutex<u8>>,
         stat: Arc<Mutex<u8>>,
         vram: Arc<Mutex<[u8; 8192]>>,
@@ -366,6 +387,15 @@ impl CentralProcessingUnit {
         wx: Arc<Mutex<u8>>,
         bgp: Arc<Mutex<u8>>,
         ime: Arc<Mutex<u8>>,
+        p1: Arc<Mutex<u8>>,
+        div: Arc<Mutex<u8>>,
+        tima: Arc<Mutex<u8>>,
+        tma: Arc<Mutex<u8>>,
+        tac: Arc<Mutex<u8>>,
+        obp0: Arc<Mutex<u8>>,
+        obp1: Arc<Mutex<u8>>,
+        dma_transfer: Arc<Mutex<bool>>,
+        dma_register: Arc<Mutex<u8>>,
         interrupt_enable: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
     ) -> CentralProcessingUnit {
@@ -373,6 +403,7 @@ impl CentralProcessingUnit {
         let pc: u16 = 0x0;
         let sp: u16 = 0xFFFE;
         let reenable_interrupts: bool = false;
+        let disable_interrupts: bool = false;
         let z_flag: u8 = 0;
         let n_flag: u8 = 0;
         let h_flag: u8 = 0;
@@ -380,9 +411,10 @@ impl CentralProcessingUnit {
         let function_map: [fn(&mut CentralProcessingUnit, u8); 256] = get_function_map();
         let cycles_map: [u8; 256] = get_cycles_map();
         let cycle_modification: u8 = 0;
-        let memory: [u8; 65536] = [0; 65536];
-        let change_ime = false;
+        let change_ime_false = false;
+        let change_ime_true = false;
         let debug_var: usize = 0;
+        let ram_enable = false;
         CentralProcessingUnit {
             regs,
             pc,
@@ -393,9 +425,14 @@ impl CentralProcessingUnit {
             h_flag,
             c_flag,
             reenable_interrupts,
+            disable_interrupts,
             function_map,
             cycles_map,
-            memory,
+            rom,
+            external_ram,
+            internal_ram,
+            rom_bank,
+            ram_bank,
             lcdc,
             stat,
             vram,
@@ -409,17 +446,30 @@ impl CentralProcessingUnit {
             ime,
             interrupt_enable,
             interrupt_flag,
-            change_ime,
+            p1,
+            div,
+            tima,
+            tma,
+            tac,
+            obp0,
+            obp1,
+            change_ime_true,
+            change_ime_false,
+            dma_register,
+            dma_transfer,
             debug_var,
+            ram_enable,
         }
     }
     pub fn run(&mut self) {
-        let mut f = File::open("C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\rom_test_from_poke_blue")
-            .expect("File problem!");
-        f.read(&mut self.memory).expect("Read issue!");
+        let mut f = File::open(
+            "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\pokemon_blue.gb",
+        )
+        .expect("File problem!");
+        f.read(&mut *self.rom.lock().unwrap()).expect("Read issue!");
         {
             let mut hold_mem = [0u8; 256];
-            hold_mem.copy_from_slice(&self.memory[..256]);
+            hold_mem.copy_from_slice(&self.rom.lock().unwrap()[..256]);
             let boot_mem = [
                 0x31, 0xFE, 0xFF, 0xAF, 0x21, 0xFF, 0x9F, 0x32, 0xCB, 0x7C, 0x20, 0xFB, 0x21, 0x26,
                 0xFF, 0x0E, 0x11, 0x3E, 0x80, 0x32, 0xE2, 0x0C, 0x3E, 0xF3, 0xE2, 0x32, 0x3E, 0x77,
@@ -441,30 +491,37 @@ impl CentralProcessingUnit {
                 0x34, 0x20, 0xF5, 0x06, 0x19, 0x78, 0x86, 0x23, 0x05, 0x20, 0xFB, 0x86, 0x20, 0xFE,
                 0x3E, 0x01, 0xE0, 0x50,
             ];
-            self.memory[..256].copy_from_slice(&boot_mem);
+            self.rom.lock().unwrap()[..256].copy_from_slice(&boot_mem);
             while self.pc < 0x100 {
                 self.process();
             }
-            self.memory[..256].copy_from_slice(&hold_mem);
+            self.rom.lock().unwrap()[..256].copy_from_slice(&hold_mem);
         }
-        // loop {
-        //     self.process();
-        // }
+        loop {
+            self.process();
+        }
     }
     fn process(&mut self) {
         let mut now = Instant::now();
-        if self.change_ime {
+        if self.change_ime_true {
             *self.ime.lock().unwrap() = 1;
+        }
+        if self.change_ime_false {
+            *self.ime.lock().unwrap() = 0;
         }
         if self.reenable_interrupts {
             self.reenable_interrupts = false;
-            self.change_ime = true;
+            self.change_ime_true = true;
         }
-        let interrupts = *self.interrupt_flag.lock().unwrap();
-        if *self.ime.lock().unwrap() == 1 && interrupts != 0 {
+        if self.disable_interrupts {
+            self.disable_interrupts = false;
+            self.change_ime_false = true;
+        }
+        let viable_interrupts =
+            *self.interrupt_flag.lock().unwrap() & *self.interrupt_enable.lock().unwrap();
+        if *self.ime.lock().unwrap() == 1 && viable_interrupts != 0 {
             now = Instant::now();
-            let enables = *self.interrupt_enable.lock().unwrap();
-            let (mask, addr) = match (interrupts & enables).trailing_zeros() {
+            let (mask, addr) = match viable_interrupts.trailing_zeros() {
                 0 => (0b11110, 0x40),
                 1 => (0b11101, 0x48),
                 2 => (0b11011, 0x50),
@@ -525,19 +582,54 @@ impl CentralProcessingUnit {
     }
     fn write_memory(&mut self, addr: usize, val: u8) {
         match addr {
-            0x0..=0x7FFF => {
-                self.memory[addr] = val;
+            0x0..=0x1FFF => match addr {
+                0x0 => self.ram_enable = false,
+                0xA => self.ram_enable = true,
+                _ => {}
+            },
+            0x2000..=0x3FFF => {
+                *self.rom_bank.lock().unwrap() = if addr == 0 { 1 } else { addr };
             }
+            0x4000..=0x5FFF => *self.ram_bank.lock().unwrap() = addr,
             0x8000..=0x9FFF => {
                 let mutex = self.vram.try_lock();
                 if let Ok(mut mem_unlocked) = mutex {
                     mem_unlocked[addr - 0x8000] = val;
                 }
             }
-            0xA000..=0xDFFF => {
-                self.memory[addr] = val;
+            0xA000..=0xBFFF => {
+                if self.ram_enable {
+                    let mutex = self.external_ram.try_lock();
+                    if let Ok(mut mem_unlocked) = mutex {
+                        mem_unlocked[8192 * *self.ram_bank.lock().unwrap() + addr - 0xA000] = val;
+                    }
+                }
+            }
+            0xC000..=0xDFFF => {
+                let mutex = self.internal_ram.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    mem_unlocked[addr - 0xC000] = val;
+                }
             }
             0xFe00..=0xFE9F => {}
+            0xFF00 => {
+                *self.p1.lock().unwrap() = val;
+            }
+            0xFF04 => {
+                *self.div.lock().unwrap() = val;
+            }
+            0xFF05 => {
+                *self.tima.lock().unwrap() = val;
+            }
+            0xFF06 => {
+                *self.tma.lock().unwrap() = val;
+            }
+            0xFF07 => {
+                *self.tac.lock().unwrap() = val;
+            }
+            0xFF0F => {
+                *self.interrupt_enable.lock().unwrap() = val;
+            }
             0xFF40 => {
                 let mutex = self.lcdc.try_lock();
                 if let Ok(mut mem_unlocked) = mutex {
@@ -574,13 +666,28 @@ impl CentralProcessingUnit {
                     *mem_unlocked = val;
                 }
             }
+            0xFF46 => {
+                *self.dma_transfer.lock().unwrap() = true;
+                *self.dma_register.lock().unwrap() = val;
+            }
             0xFF47 => {
                 let mutex = self.bgp.try_lock();
                 if let Ok(mut mem_unlocked) = mutex {
                     *mem_unlocked = val;
                 }
             }
-
+            0xFF48 => {
+                let mutex = self.obp0.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF49 => {
+                let mutex = self.obp1.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
             0xFF4A => {
                 let mutex = self.wy.try_lock();
                 if let Ok(mut mem_unlocked) = mutex {
@@ -594,12 +701,27 @@ impl CentralProcessingUnit {
                     *mem_unlocked = val;
                 }
             }
-            _ => self.memory[addr] = val,
+            _ => {}
         }
     }
     fn get_memory(&self, addr: usize) -> u8 {
         match addr {
-            0x0..=0x7FFF => self.memory[addr],
+            0x0..=0x3FFF => {
+                let mutex = self.rom.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    (*mem_unlocked)[addr]
+                } else {
+                    0xFF
+                }
+            }
+            0x4000..=0x7FFF => {
+                let mutex = self.rom.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    mem_unlocked[16384 * *self.rom_bank.lock().unwrap() - 0x4000 + addr]
+                } else {
+                    0xFF
+                }
+            }
             0x8000..=0x9FFF => {
                 let mutex = self.vram.try_lock();
                 if let Ok(mem_unlocked) = mutex {
@@ -608,8 +730,37 @@ impl CentralProcessingUnit {
                     0xFF
                 }
             }
-            0xA000..=0xDFFF => self.memory[addr],
+            0xA000..=0xBFFF => {
+                if self.ram_enable {
+                    if *self.ram_bank.lock().unwrap() <= 3 {
+                        let mutex = self.vram.try_lock();
+                        if let Ok(mem_unlocked) = mutex {
+                            mem_unlocked[8192 * *self.ram_bank.lock().unwrap() + addr - 0xA000]
+                        } else {
+                            0xFF
+                        }
+                    } else {
+                        0 // Timer
+                    }
+                } else {
+                    0xFF
+                }
+            }
+            0xC000..=0xDFFF => {
+                let mutex = self.internal_ram.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    mem_unlocked[addr - 0xC000]
+                } else {
+                    0xFF
+                }
+            }
             0xFE00..=0xFE9F => 0xFF,
+            0xFF00 => *self.p1.lock().unwrap(),
+            0xFF04 => *self.div.lock().unwrap(),
+            0xFF05 => *self.tima.lock().unwrap(),
+            0xFF06 => *self.tma.lock().unwrap(),
+            0xFF07 => *self.tac.lock().unwrap(),
+            0xFF0F => *self.interrupt_flag.lock().unwrap(),
             0xFF40 => {
                 let mutex = self.lcdc.try_lock();
                 if let Ok(mem_unlocked) = mutex {
@@ -666,7 +817,22 @@ impl CentralProcessingUnit {
                     0xFF
                 }
             }
-
+            0xFF48 => {
+                let mutex = self.obp0.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF49 => {
+                let mutex = self.obp1.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
             0xFF4A => {
                 let mutex = self.wy.try_lock();
                 if let Ok(mem_unlocked) = mutex {
@@ -684,7 +850,8 @@ impl CentralProcessingUnit {
                     0xFF
                 }
             }
-            _ => self.memory[addr],
+            0xFFFF => *self.interrupt_enable.lock().unwrap(),
+            _ => 0xFF,
         }
     }
     fn add_set_flags(&mut self, val1: &u16, val2: &u16, z: bool, h: bool, c: bool) {
@@ -1592,7 +1759,7 @@ impl CentralProcessingUnit {
         self.pc += 1;
     }
     fn di(&mut self, _command: u8) {
-        self.reenable_interrupts = false;
+        self.disable_interrupts = true;
         self.pc += 1;
     }
     fn cb(&mut self, _command: u8) {
@@ -1668,7 +1835,7 @@ impl CentralProcessingUnit {
                     let bit_7 = (*reg >> 7) & 1;
                     let bit_0 = *reg & 1;
                     *reg >>= 1;
-                    *reg += (bit_7 << 7);
+                    *reg += bit_7 << 7;
                     bit_0
                 } else {
                     let bit_7 = (*reg >> 7) & 1;
