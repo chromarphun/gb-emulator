@@ -6,7 +6,7 @@ mod ppu;
 mod timing;
 
 fn main() {
-    let rom = Arc::new(Mutex::new([0u8; 2097152]));
+    let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
     let external_ram = Arc::new(Mutex::new([0u8; 131072]));
     let internal_ram = Arc::new(Mutex::new([0u8; 8192]));
     let rom_bank = Arc::new(Mutex::new(0usize));
@@ -20,7 +20,7 @@ fn main() {
     let ly = Arc::new(Mutex::new(0u8));
     let lyc = Arc::new(Mutex::new(0u8));
     let wy = Arc::new(Mutex::new(0u8));
-    let wx = Arc::new(Mutex::new(0u8));
+    let wx = Arc::new(Mutex::new(7u8));
     let bgp = Arc::new(Mutex::new(0u8));
     let ime = Arc::new(Mutex::new(0u8));
     let interrupt_enable = Arc::new(Mutex::new(0u8));
@@ -76,6 +76,7 @@ fn main() {
         lcdc,
         stat,
         vram,
+        oam,
         scy,
         scx,
         ly,

@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 const NANOS_PER_DOT: f64 = 238.4185791015625;
-const DMA_DOTS: usize = 160;
+const DMA_DOTS: usize = 640;
 const PASS_DOTS: usize = 8;
 
 pub struct DirectMemoryAccess {
@@ -10,7 +10,7 @@ pub struct DirectMemoryAccess {
     dma_transfer: Arc<Mutex<bool>>,
     vram: Arc<Mutex<[u8; 8192]>>,
     oam: Arc<Mutex<[u8; 160]>>,
-    rom: Arc<Mutex<[u8; 2097152]>>,
+    rom: Arc<Mutex<Vec<u8>>>,
     external_ram: Arc<Mutex<[u8; 131072]>>,
     internal_ram: Arc<Mutex<[u8; 8192]>>,
     rom_bank: Arc<Mutex<usize>>,
@@ -23,7 +23,7 @@ impl DirectMemoryAccess {
         dma_transfer: Arc<Mutex<bool>>,
         vram: Arc<Mutex<[u8; 8192]>>,
         oam: Arc<Mutex<[u8; 160]>>,
-        rom: Arc<Mutex<[u8; 2097152]>>,
+        rom: Arc<Mutex<Vec<u8>>>,
         external_ram: Arc<Mutex<[u8; 131072]>>,
         internal_ram: Arc<Mutex<[u8; 8192]>>,
         rom_bank: Arc<Mutex<usize>>,
@@ -44,8 +44,8 @@ impl DirectMemoryAccess {
     pub fn run(&mut self) {
         loop {
             if *self.dma_transfer.lock().unwrap() {
-                *self.dma_transfer.lock().unwrap() = false;
                 let now = Instant::now();
+                *self.dma_transfer.lock().unwrap() = false;
                 let vram = self.vram.lock().unwrap();
                 let mut oam = self.oam.lock().unwrap();
                 let rom = self.rom.lock().unwrap();
@@ -67,7 +67,7 @@ impl DirectMemoryAccess {
                         oam.copy_from_slice(&rom[adjusted_start_address..adjusted_end_address]);
                     }
                     0x8..=0x9 => {
-                        let adjusted_start_address = reg - 0x8000;
+                        let adjusted_start_address = start_address - 0x8000;
                         let adjusted_end_address = adjusted_start_address + 0xA0;
                         oam.copy_from_slice(&vram[adjusted_start_address..adjusted_end_address]);
                     }
@@ -79,7 +79,7 @@ impl DirectMemoryAccess {
                         );
                     }
                     0xC..=0xD => {
-                        let adjusted_start_address = (reg - 0xC000) as usize;
+                        let adjusted_start_address = (start_address - 0xC000) as usize;
                         let adjusted_end_address = adjusted_start_address + 0xA0;
                         oam.copy_from_slice(
                             &internal_ram[adjusted_start_address..adjusted_end_address],

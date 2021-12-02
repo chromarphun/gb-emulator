@@ -57,7 +57,8 @@ impl Timer {
 
             div_counter = (div_counter + 1) % 16;
             if div_counter == 0 {
-                *self.div.lock().unwrap() += 1;
+                let mut div = self.div.lock().unwrap();
+                *div = (*div).wrapping_add(1);
             }
 
             while (now.elapsed().as_nanos()) < NANOS_PER_TIME {}

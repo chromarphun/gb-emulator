@@ -11,9 +11,11 @@ const REG_D: usize = 3;
 const REG_E: usize = 4;
 const REG_H: usize = 5;
 const REG_L: usize = 6;
-const CARRY_LIMIT: u16 = 255;
+const CARRY_LIMIT_16: u32 = 65535;
+const CARRY_LIMIT_8: u16 = 255;
 const NANOS_PER_DOT: f64 = 238.4185791015625;
 const INTERRUPT_DOTS: u8 = 20;
+const HALT_DOTS: u8 = 10;
 
 #[inline]
 fn combine_bytes(high_byte: u8, low_byte: u8) -> u16 {
@@ -40,7 +42,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8); 256] {
         CentralProcessingUnit::inc_reg_8,
         CentralProcessingUnit::dec_reg_8,
         CentralProcessingUnit::ld_reg_8,
-        CentralProcessingUnit::rot_a_left,
+        CentralProcessingUnit::rlca,
         CentralProcessingUnit::ld_addr_sp,
         CentralProcessingUnit::add_hl_reg_16,
         CentralProcessingUnit::ld_a_addr,
@@ -48,7 +50,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8); 256] {
         CentralProcessingUnit::inc_reg_8,
         CentralProcessingUnit::dec_reg_8,
         CentralProcessingUnit::ld_reg_8,
-        CentralProcessingUnit::rot_a_right,
+        CentralProcessingUnit::rrca,
         //0x10
         CentralProcessingUnit::stop,
         CentralProcessingUnit::ld_reg_16,
@@ -57,7 +59,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8); 256] {
         CentralProcessingUnit::inc_reg_8,
         CentralProcessingUnit::dec_reg_8,
         CentralProcessingUnit::ld_reg_8,
-        CentralProcessingUnit::rot_a_left_carry,
+        CentralProcessingUnit::rla,
         CentralProcessingUnit::jr,
         CentralProcessingUnit::add_hl_reg_16,
         CentralProcessingUnit::ld_a_addr,
@@ -65,7 +67,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8); 256] {
         CentralProcessingUnit::inc_reg_8,
         CentralProcessingUnit::dec_reg_8,
         CentralProcessingUnit::ld_reg_8,
-        CentralProcessingUnit::rot_a_right_carry,
+        CentralProcessingUnit::rra,
         //0x20
         CentralProcessingUnit::jr,
         CentralProcessingUnit::ld_reg_16,
@@ -280,7 +282,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8); 256] {
         CentralProcessingUnit::arthimetic_a,
         CentralProcessingUnit::rst,
         CentralProcessingUnit::add_sp_i8,
-        CentralProcessingUnit::jp,
+        CentralProcessingUnit::jp_hl,
         CentralProcessingUnit::ld_addr_a,
         CentralProcessingUnit::fail,
         CentralProcessingUnit::fail,
@@ -336,14 +338,16 @@ pub struct CentralProcessingUnit {
     disable_interrupts: bool,
     function_map: [fn(&mut CentralProcessingUnit, u8); 256],
     cycles_map: [u8; 256],
-    rom: Arc<Mutex<[u8; 2097152]>>,
+    rom: Arc<Mutex<Vec<u8>>>,
     external_ram: Arc<Mutex<[u8; 131072]>>,
     internal_ram: Arc<Mutex<[u8; 8192]>>,
+    high_ram: [u8; 127],
     rom_bank: Arc<Mutex<usize>>,
     ram_bank: Arc<Mutex<usize>>,
     lcdc: Arc<Mutex<u8>>,
     stat: Arc<Mutex<u8>>,
     vram: Arc<Mutex<[u8; 8192]>>,
+    oam: Arc<Mutex<[u8; 160]>>,
     scy: Arc<Mutex<u8>>,
     scx: Arc<Mutex<u8>>,
     ly: Arc<Mutex<u8>>,
@@ -367,11 +371,15 @@ pub struct CentralProcessingUnit {
     change_ime_false: bool,
     debug_var: usize,
     ram_enable: bool,
+    in_boot_rom: bool,
+    holding_ff01: u8,
+    holding_ff02: u8,
+    halting: bool,
 }
 
 impl CentralProcessingUnit {
     pub fn new(
-        rom: Arc<Mutex<[u8; 2097152]>>,
+        rom: Arc<Mutex<Vec<u8>>>,
         external_ram: Arc<Mutex<[u8; 131072]>>,
         internal_ram: Arc<Mutex<[u8; 8192]>>,
         rom_bank: Arc<Mutex<usize>>,
@@ -379,6 +387,7 @@ impl CentralProcessingUnit {
         lcdc: Arc<Mutex<u8>>,
         stat: Arc<Mutex<u8>>,
         vram: Arc<Mutex<[u8; 8192]>>,
+        oam: Arc<Mutex<[u8; 160]>>,
         scy: Arc<Mutex<u8>>,
         scx: Arc<Mutex<u8>>,
         ly: Arc<Mutex<u8>>,
@@ -415,6 +424,11 @@ impl CentralProcessingUnit {
         let change_ime_true = false;
         let debug_var: usize = 0;
         let ram_enable = false;
+        let high_ram = [0u8; 127];
+        let in_boot_rom = true;
+        let holding_ff01 = 0;
+        let holding_ff02 = 0;
+        let halting = false;
         CentralProcessingUnit {
             regs,
             pc,
@@ -431,11 +445,13 @@ impl CentralProcessingUnit {
             rom,
             external_ram,
             internal_ram,
+            high_ram,
             rom_bank,
             ram_bank,
             lcdc,
             stat,
             vram,
+            oam,
             scy,
             scx,
             ly,
@@ -459,14 +475,19 @@ impl CentralProcessingUnit {
             dma_transfer,
             debug_var,
             ram_enable,
+            in_boot_rom,
+            holding_ff01,
+            holding_ff02,
+            halting,
         }
     }
     pub fn run(&mut self) {
         let mut f = File::open(
-            "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\pokemon_blue.gb",
+            "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\DrMario.gb",
         )
         .expect("File problem!");
-        f.read(&mut *self.rom.lock().unwrap()).expect("Read issue!");
+        f.read_to_end(&mut *self.rom.lock().unwrap())
+            .expect("Read issue!");
         {
             let mut hold_mem = [0u8; 256];
             hold_mem.copy_from_slice(&self.rom.lock().unwrap()[..256]);
@@ -496,7 +517,10 @@ impl CentralProcessingUnit {
                 self.process();
             }
             self.rom.lock().unwrap()[..256].copy_from_slice(&hold_mem);
+            println!("Made it past boot!");
         }
+        //self.pc = 0x100;
+        self.in_boot_rom = false;
         loop {
             self.process();
         }
@@ -504,9 +528,11 @@ impl CentralProcessingUnit {
     fn process(&mut self) {
         let mut now = Instant::now();
         if self.change_ime_true {
+            self.change_ime_true = false;
             *self.ime.lock().unwrap() = 1;
         }
         if self.change_ime_false {
+            self.change_ime_false = false;
             *self.ime.lock().unwrap() = 0;
         }
         if self.reenable_interrupts {
@@ -519,6 +545,15 @@ impl CentralProcessingUnit {
         }
         let viable_interrupts =
             *self.interrupt_flag.lock().unwrap() & *self.interrupt_enable.lock().unwrap();
+        if self.halting {
+            while *self.interrupt_flag.lock().unwrap() & *self.interrupt_enable.lock().unwrap() == 0
+            {
+                let halt_now = Instant::now();
+                while halt_now.elapsed().as_nanos() < (HALT_DOTS as f64 * NANOS_PER_DOT) as u128 {}
+            }
+            self.pc += 1;
+            self.halting = false;
+        }
         if *self.ime.lock().unwrap() == 1 && viable_interrupts != 0 {
             now = Instant::now();
             let (mask, addr) = match viable_interrupts.trailing_zeros() {
@@ -539,6 +574,11 @@ impl CentralProcessingUnit {
             while (now.elapsed().as_nanos()) < (INTERRUPT_DOTS as f64 * NANOS_PER_DOT) as u128 {}
         } else {
             let command = self.get_memory(self.pc as usize) as usize;
+            if !self.in_boot_rom {
+                //println!("{}", format!("pc: {:X}, command: {:X}", self.pc, command));
+                self.debug_var = 0;
+            }
+            self.debug_var = 1;
             self.function_map[command](self, command as u8);
             let cycles = if self.cycle_modification != 0 {
                 let val = self.cycle_modification;
@@ -547,13 +587,10 @@ impl CentralProcessingUnit {
             } else {
                 self.cycles_map[command]
             };
-            self.debug_var += 1;
-            if self.pc == 0x89 {
+            if self.debug_var == 1 {
                 self.debug_var = 0;
             }
-            if self.regs[REG_A] == 0x90 {
-                self.debug_var = 0;
-            }
+            if self.pc == 0xCB16 {}
             while (now.elapsed().as_nanos()) < (cycles as f64 * NANOS_PER_DOT) as u128 {}
         }
     }
@@ -581,6 +618,144 @@ impl CentralProcessingUnit {
         [val1, val2]
     }
     fn write_memory(&mut self, addr: usize, val: u8) {
+        self.write_memory_rom_only(addr, val);
+    }
+    fn get_memory(&mut self, addr: usize) -> u8 {
+        self.get_memory_rom_only(addr)
+    }
+    fn write_memory_rom_only(&mut self, addr: usize, val: u8) {
+        match addr {
+            0x8000..=0x9FFF => {
+                let mutex = self.vram.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    mem_unlocked[addr - 0x8000] = val;
+                } else {
+                    println!("WRITE FAILED");
+                }
+            }
+            0xC000..=0xDFFF => {
+                let mutex = self.internal_ram.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    mem_unlocked[addr - 0xC000] = val;
+                } else {
+                    println!("WRITE FAILED");
+                }
+            }
+            0xE000..=0xFDFF => {
+                println!("FORBIDDEN AREA");
+            }
+            0xFE00..=0xFE9F => {
+                let mutex = self.oam.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    mem_unlocked[addr - 0xFE00] = val;
+                } else {
+                    println!("WRITE FAILED");
+                }
+            }
+            0xFF00 => {
+                *self.p1.lock().unwrap() = val;
+            }
+            0xFF01 => {
+                println!("{}", val as char);
+                self.holding_ff01 = val;
+            }
+            0xFF02 => {
+                self.holding_ff02 = val;
+            }
+            0xFF04 => {
+                *self.div.lock().unwrap() = 0;
+            }
+            0xFF05 => {
+                *self.tima.lock().unwrap() = val;
+            }
+            0xFF06 => {
+                *self.tma.lock().unwrap() = val;
+            }
+            0xFF07 => {
+                *self.tac.lock().unwrap() = val;
+            }
+            0xFF0F => {
+                *self.interrupt_flag.lock().unwrap() = val;
+            }
+            0xFF40 => {
+                let mutex = self.lcdc.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF41 => {
+                let mutex = self.stat.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF42 => {
+                let mutex = self.scy.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF43 => {
+                let mutex = self.scx.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF44 => {
+                let mutex = self.ly.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF45 => {
+                let mutex = self.lyc.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF46 => {
+                *self.dma_transfer.lock().unwrap() = true;
+                *self.dma_register.lock().unwrap() = val;
+            }
+            0xFF47 => {
+                let mutex = self.bgp.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF48 => {
+                let mutex = self.obp0.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF49 => {
+                let mutex = self.obp1.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF4A => {
+                let mutex = self.wy.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+
+            0xFF4B => {
+                let mutex = self.wx.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    *mem_unlocked = val;
+                }
+            }
+            0xFF80..=0xFFFE => self.high_ram[addr - 0xFF80] = val,
+            0xFFFF => *self.interrupt_enable.lock().unwrap() = val,
+            _ => {
+                println!("{}", format!("trying to write to 0x{:X}!", addr))
+            }
+        }
+    }
+    fn write_memory_mbc3(&mut self, addr: usize, val: u8) {
         match addr {
             0x0..=0x1FFF => match addr {
                 0x0 => self.ram_enable = false,
@@ -588,7 +763,7 @@ impl CentralProcessingUnit {
                 _ => {}
             },
             0x2000..=0x3FFF => {
-                *self.rom_bank.lock().unwrap() = if addr == 0 { 1 } else { addr };
+                *self.rom_bank.lock().unwrap() = if val == 0 { 1 } else { val as usize };
             }
             0x4000..=0x5FFF => *self.ram_bank.lock().unwrap() = addr,
             0x8000..=0x9FFF => {
@@ -701,10 +876,156 @@ impl CentralProcessingUnit {
                     *mem_unlocked = val;
                 }
             }
+            0xFF80..=0xFFFE => self.high_ram[addr - 0xFF80] = val,
+            0xFFFF => *self.interrupt_enable.lock().unwrap() = val,
             _ => {}
         }
     }
-    fn get_memory(&self, addr: usize) -> u8 {
+    fn get_memory_rom_only(&self, addr: usize) -> u8 {
+        match addr {
+            0x0..=0x7FFF => {
+                let mutex = self.rom.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    (*mem_unlocked)[addr]
+                } else {
+                    0xFF
+                }
+            }
+
+            0x8000..=0x9FFF => {
+                let mutex = self.vram.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    mem_unlocked[addr - 0x8000]
+                } else {
+                    0xFF
+                }
+            }
+            0xC000..=0xDFFF => {
+                let mutex = self.internal_ram.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    mem_unlocked[addr - 0xC000]
+                } else {
+                    0xFF
+                }
+            }
+            0xE000..=0xFDFF => {
+                println!("FORBIDDEN AREA");
+                0xFF
+            }
+            0xFE00..=0xFE9F => {
+                let mutex = self.oam.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    mem_unlocked[addr - 0xFE00]
+                } else {
+                    0xFF
+                }
+            }
+            0xFF00 => *self.p1.lock().unwrap(),
+            0xFF01 => self.holding_ff01,
+            0xFF02 => self.holding_ff02,
+            0xFF04 => *self.div.lock().unwrap(),
+            0xFF05 => *self.tima.lock().unwrap(),
+            0xFF06 => *self.tma.lock().unwrap(),
+            0xFF07 => *self.tac.lock().unwrap(),
+            0xFF0F => *self.interrupt_flag.lock().unwrap(),
+            0xFF40 => {
+                let mutex = self.lcdc.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF41 => {
+                let mutex = self.stat.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF42 => {
+                let mutex = self.scy.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF43 => {
+                let mutex = self.scx.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF44 => {
+                let mutex = self.ly.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF45 => {
+                let mutex = self.lyc.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF47 => {
+                let mutex = self.bgp.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF48 => {
+                let mutex = self.obp0.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF49 => {
+                let mutex = self.obp1.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF4A => {
+                let mutex = self.wy.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+
+            0xFF4B => {
+                let mutex = self.wx.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    *mem_unlocked
+                } else {
+                    0xFF
+                }
+            }
+            0xFF80..=0xFFFE => self.high_ram[addr - 0xFF80],
+            0xFFFF => *self.interrupt_enable.lock().unwrap(),
+            _ => {
+                println!("{}", format!("trying to write to 0x{:X}!", addr));
+                0xFF
+            }
+        }
+    }
+    fn get_memory_mbc3(&self, addr: usize) -> u8 {
         match addr {
             0x0..=0x3FFF => {
                 let mutex = self.rom.try_lock();
@@ -717,7 +1038,7 @@ impl CentralProcessingUnit {
             0x4000..=0x7FFF => {
                 let mutex = self.rom.try_lock();
                 if let Ok(mem_unlocked) = mutex {
-                    mem_unlocked[16384 * *self.rom_bank.lock().unwrap() - 0x4000 + addr]
+                    mem_unlocked[16384 * (*self.rom_bank.lock().unwrap()) - 0x4000 + addr]
                 } else {
                     0xFF
                 }
@@ -850,23 +1171,24 @@ impl CentralProcessingUnit {
                     0xFF
                 }
             }
+            0xFF80..=0xFFFE => self.high_ram[addr - 0xFF80],
             0xFFFF => *self.interrupt_enable.lock().unwrap(),
             _ => 0xFF,
         }
     }
-    fn add_set_flags(&mut self, val1: &u16, val2: &u16, z: bool, h: bool, c: bool) {
+    fn add_set_flags_16(&mut self, val1: &u32, val2: &u32, z: bool, h: bool, c: bool) {
         if z {
             self.z_flag = if (val1 + val2) == 0 { 1 } else { 0 };
         }
         if h {
-            self.h_flag = if (((val1 & 0xF) + (val2 & 0xF)) & 0x10) == 0x10 {
+            self.h_flag = if (((val1 & 0xFFF) + (val2 & 0xFFF)) & (0x1000)) == 0x1000 {
                 1
             } else {
                 0
             };
         }
         if c {
-            self.c_flag = if (val1 + val2) > CARRY_LIMIT { 1 } else { 0 };
+            self.c_flag = if (val1 + val2) > CARRY_LIMIT_16 { 1 } else { 0 };
         }
     }
     // fn sub_set_flags(&mut self, val1: u16, val2: u16, z: bool, h: bool, c: bool) {
@@ -1151,7 +1473,7 @@ impl CentralProcessingUnit {
         };
         self.pc += 2;
     }
-    fn rot_a_left(&mut self, _command: u8) {
+    fn rlca(&mut self, _command: u8) {
         let bit = self.regs[REG_A] >> 7;
         self.regs[REG_A] <<= 1;
         self.regs[REG_A] += bit;
@@ -1161,7 +1483,7 @@ impl CentralProcessingUnit {
         self.c_flag = bit;
         self.pc += 1;
     }
-    fn rot_a_left_carry(&mut self, _command: u8) {
+    fn rla(&mut self, _command: u8) {
         let last_bit = self.regs[REG_A] >> 7;
         self.regs[REG_A] <<= 1;
         self.regs[REG_A] += self.c_flag;
@@ -1172,29 +1494,43 @@ impl CentralProcessingUnit {
         self.pc += 1;
     }
     fn daa(&mut self, _command: u8) {
-        if self.n_flag == 0 {
-            // after an addition, adjust if (half-)carry occurred or if result is out of bounds
-            if self.c_flag == 1 || self.regs[REG_A] > 0x99 {
-                self.regs[REG_A] += 0x60;
-                self.c_flag = 1;
-            }
-            if self.h_flag == 1 || (self.regs[REG_A] & 0x0F) > 0x09 {
-                self.regs[REG_A] += 0x6;
-            }
+        // if self.n_flag == 0 {
+        //     // after an addition, adjust if (half-)carry occurred or if result is out of bounds
+        //     if self.c_flag == 1 || self.regs[REG_A] > 0x99 {
+        //         self.regs[REG_A] = self.regs[REG_A].wrapping_add(0x60);
+        //         self.c_flag = 1;
+        //     }
+        //     if self.h_flag == 1 || (self.regs[REG_A] & 0x0F) > 0x09 {
+        //         self.regs[REG_A] = self.regs[REG_A].wrapping_add(0x6);
+        //     }
+        // } else {
+        //     // after a subtraction, only adjust if (half-)carry occurred
+        //     if self.c_flag == 1 {
+        //         self.regs[REG_A] = self.regs[REG_A].wrapping_sub(0x60);
+        //     }
+        //     if self.h_flag == 1 {
+        //         self.regs[REG_A] = self.regs[REG_A].wrapping_sub(0x6);
+        //     }
+        // }
+        // self.pc += 1;
+        // self.z_flag = if self.regs[REG_A] == 0 { 1 } else { 0 };
+        // self.h_flag = 0;
+        let mut correction = 0;
+        if self.h_flag == 1 || ((self.n_flag == 0) && ((self.regs[REG_A] & 0xF) > 0x9)) {
+            correction |= 0x6;
+        }
+        if self.c_flag == 1 || ((self.n_flag == 0) && (self.regs[REG_A] > 0x99)) {
+            correction |= 0x60;
+            self.c_flag = 1;
+        }
+        self.regs[REG_A] = if self.n_flag == 0 {
+            self.regs[REG_A].wrapping_add(correction)
         } else {
-            // after a subtraction, only adjust if (half-)carry occurred
-            if self.c_flag == 1 {
-                self.regs[REG_A] -= 0x60;
-            }
-            if self.h_flag == 1 {
-                self.regs[REG_A] -= 0x6;
-            }
-        }
-        self.pc += 1;
-        if self.regs[REG_A] == 0 {
-            self.z_flag = 1;
-        }
+            self.regs[REG_A].wrapping_sub(correction)
+        };
+        self.z_flag = if self.regs[REG_A] == 0 { 1 } else { 0 };
         self.h_flag = 0;
+        self.pc += 1;
     }
     fn scf(&mut self, _command: u8) {
         self.n_flag = 0;
@@ -1224,7 +1560,8 @@ impl CentralProcessingUnit {
         };
         if condition {
             self.cycle_modification = 12;
-            self.pc = self.pc.wrapping_add((add as i8) as u16);
+            self.pc = (self.pc as i32 + (add as i8) as i32) as u16;
+            //self.pc = self.pc.wrapping_add((add as i8) as u16);
         }
     }
     fn add_hl_reg_16(&mut self, command: u8) {
@@ -1239,7 +1576,7 @@ impl CentralProcessingUnit {
             0x39 => self.sp, //ADD HL, SP
             _ => panic!("{}", format!("Unrecognized command {:X} at jr!", command)),
         };
-        self.add_set_flags(&hl, &reg16, false, true, true);
+        self.add_set_flags_16(&(hl as u32), &(reg16 as u32), false, true, true);
         hl = hl.wrapping_add(reg16);
         let (h_new, l_new) = split_u16(hl);
         self.regs[REG_H] = h_new;
@@ -1298,7 +1635,7 @@ impl CentralProcessingUnit {
     fn dec_reg_16(&mut self, command: u8) {
         if command == 0x3B {
             //DEC SP
-            self.sp = self.sp.wrapping_add(1);
+            self.sp = self.sp.wrapping_sub(1);
         } else {
             let (r_low, r_high) = match command {
                 0x0B => (REG_C, REG_B), //DEC BC
@@ -1317,7 +1654,7 @@ impl CentralProcessingUnit {
         }
         self.pc += 1;
     }
-    fn rot_a_right(&mut self, _command: u8) {
+    fn rrca(&mut self, _command: u8) {
         let bit = self.regs[REG_A] & 1;
         self.regs[REG_A] >>= 1;
         self.regs[REG_A] += bit << 7;
@@ -1328,7 +1665,7 @@ impl CentralProcessingUnit {
         self.c_flag = bit;
         self.pc += 1;
     }
-    fn rot_a_right_carry(&mut self, _command: u8) {
+    fn rra(&mut self, _command: u8) {
         let bit = self.regs[REG_A] & 1;
         self.regs[REG_A] >>= 1;
         self.regs[REG_A] += self.c_flag << 7;
@@ -1339,14 +1676,16 @@ impl CentralProcessingUnit {
         self.pc += 1;
     }
     fn cpl(&mut self, _command: u8) {
-        self.n_flag = 0;
-        self.h_flag = 0;
+        self.n_flag = 1;
+        self.h_flag = 1;
         self.regs[REG_A] = !self.regs[REG_A];
+        self.pc += 1;
     }
     fn ccf(&mut self, _command: u8) {
         self.c_flag = if self.c_flag == 1 { 0 } else { 1 };
         self.n_flag = 0;
         self.h_flag = 0;
+        self.pc += 1;
     }
     fn ld_reg_reg(&mut self, command: u8) {
         let (command_high, command_low) = split_byte(command);
@@ -1447,7 +1786,9 @@ impl CentralProcessingUnit {
         self.pc += 1;
         self.write_memory(addr, self.regs[reg]);
     }
-    fn halt(&mut self, _command: u8) {}
+    fn halt(&mut self, _command: u8) {
+        self.halting = true;
+    }
     fn arthimetic_a(&mut self, command: u8) {
         let additional_val = self.get_memory((self.pc + 1) as usize);
         let (command_high, command_low) = split_byte(command);
@@ -1476,8 +1817,6 @@ impl CentralProcessingUnit {
             self.pc += 1;
             additional_val
         };
-        let (op_high, op_low) = split_byte(op_val);
-        let (a_high, a_low) = split_byte(self.regs[REG_A]);
         let command_high_mod = (command_high - 0x8) % 4;
         let (additional, second_half) = if command_low >= 0x8 {
             if command_high_mod != 0x3 {
@@ -1499,9 +1838,16 @@ impl CentralProcessingUnit {
             match command_high_mod {
                 0x0 => {
                     //ADD/ADC A
-                    let carry_over = op_low as i8 + a_low as i8 + additional as i8 - 15;
-                    self.h_flag = if carry_over > 0 { 1 } else { 0 };
-                    self.c_flag = if op_high as i8 + a_high as i8 + carry_over >= 16 {
+                    self.h_flag = if ((self.regs[REG_A] & 0xF) + (op_val & 0xF) + additional) & 0x10
+                        == 0x10
+                    {
+                        1
+                    } else {
+                        0
+                    };
+                    self.c_flag = if self.regs[REG_A] as u16 + op_val as u16 + additional as u16
+                        > CARRY_LIMIT_8
+                    {
                         1
                     } else {
                         0
@@ -1513,17 +1859,27 @@ impl CentralProcessingUnit {
                     self.regs[REG_A]
                 }
                 0x1 | 0x3 => {
-                    let carry_over = a_low as i8 - (op_low as i8 + additional as i8);
-                    self.h_flag = if carry_over < 0 { 1 } else { 0 };
-                    self.c_flag = if a_high as i8 - op_high as i8 + carry_over < 0 {
+                    //SUB/SBC/CP
+                    self.h_flag = if ((self.regs[REG_A] & 0xF)
+                        .wrapping_sub(op_val & 0xF)
+                        .wrapping_sub(additional))
+                        & 0x10
+                        == 0x10
+                    {
                         1
                     } else {
                         0
                     };
+                    self.c_flag = if (op_val as u16 + additional as u16) > self.regs[REG_A] as u16 {
+                        1
+                    } else {
+                        0
+                    };
+
                     let new_a = self.regs[REG_A]
                         .wrapping_sub(op_val)
                         .wrapping_sub(additional);
-                    if !second_half {
+                    if command_high_mod == 0x1 {
                         self.regs[REG_A] = new_a;
                     }
                     self.n_flag = 1;
@@ -1537,6 +1893,7 @@ impl CentralProcessingUnit {
                     } else {
                         //AND A
                         self.regs[REG_A] &= op_val;
+                        self.h_flag = 1;
                     }
                     self.n_flag = 0;
                     self.c_flag = 0;
@@ -1551,56 +1908,64 @@ impl CentralProcessingUnit {
                 ),
             }
         };
-        if zero_val == 0 {
-            self.z_flag = 1;
-        } else {
-            self.z_flag = 0;
-        }
+        self.z_flag = if zero_val == 0 { 1 } else { 0 };
         self.pc += 1;
     }
     fn ret(&mut self, command: u8) {
-        let [addr_low, addr_high] = self.pop_stack();
-        let addr = combine_bytes(addr_high, addr_low);
         self.pc += 1;
-        match command {
+        let condition = match command {
             0xC0 => {
                 //RET NZ
                 if self.z_flag == 0 {
-                    self.pc = addr;
                     self.cycle_modification = 20;
+                    true
+                } else {
+                    false
                 }
             }
             0xD0 => {
                 //RET NC
                 if self.c_flag == 0 {
-                    self.pc = addr;
                     self.cycle_modification = 20;
+                    true
+                } else {
+                    false
                 }
             }
             0xC8 => {
                 //RET Z
                 if self.z_flag == 1 {
-                    self.pc = addr;
                     self.cycle_modification = 20;
+                    true
+                } else {
+                    false
                 }
             }
             0xD8 => {
                 //RET C
                 if self.c_flag == 1 {
-                    self.pc = addr;
                     self.cycle_modification = 20;
+                    true
+                } else {
+                    false
                 }
             }
             0xC9 => {
                 //RET
-                self.pc = addr;
+                true
             }
             0xD9 => {
                 //RETI
-                self.pc = addr;
+
                 self.reenable_interrupts = true;
+                true
             }
             _ => panic!("{}", format!("Unrecognized command {:X} at ret!", command)),
+        };
+        if condition {
+            let [addr_low, addr_high] = self.pop_stack();
+            let addr = combine_bytes(addr_high, addr_low);
+            self.pc = addr;
         }
     }
     fn pop(&mut self, command: u8) {
@@ -1687,12 +2052,13 @@ impl CentralProcessingUnit {
     }
     fn rst(&mut self, command: u8) {
         let (high_command, low_command) = split_byte(command);
+        self.pc += 1;
         let (high_pc, low_pc) = split_u16(self.pc);
         self.push_stack(high_pc, low_pc);
         self.pc = if low_command == 0xF {
-            (10 * (high_command as u16) - 0xC) + 8
+            16 * (high_command as u16 - 0xC) + 8
         } else {
-            10 * (high_command as u16 - 0xC)
+            16 * (high_command as u16 - 0xC)
         };
     }
     fn jp(&mut self, command: u8) {
@@ -1714,40 +2080,92 @@ impl CentralProcessingUnit {
             self.pc + 3
         };
     }
+    fn jp_hl(&mut self, _command: u8) {
+        self.pc = combine_bytes(self.regs[REG_H], self.regs[REG_L]);
+    }
     fn add_sp_i8(&mut self, _command: u8) {
-        let val = self.get_memory((self.pc + 1) as usize);
-        self.sp = self.sp.wrapping_add((val as i8) as u16);
-        self.sp = if (val as i8) < 0 {
-            let minus_val: u8 = ((val as i8) * -1).try_into().unwrap();
-            self.h_flag = if (((self.sp & 0xF) as u8 + (minus_val & 0xF)) & 0x10) == 0x10 {
+        let val = self.get_memory((self.pc + 1) as usize) as i8;
+        let new_sp = self.sp.wrapping_add(val as u16);
+        self.h_flag = if val >= 0 {
+            if (self.sp & 0xF) as i8 + (val & 0xF) > 0xF {
                 1
             } else {
                 0
-            };
-            self.c_flag = if self.sp < minus_val as u16 { 1 } else { 0 };
-            self.sp - minus_val as u16
+            }
         } else {
-            self.h_flag = if (((val & 0xF) + (self.sp & 0xF) as u8) & 0x10) == 0x10 {
+            if new_sp & 0xF <= self.sp & 0xF {
                 1
             } else {
                 0
-            };
-            self.c_flag = if val as u16 + self.sp > CARRY_LIMIT {
-                1
-            } else {
-                0
-            };
-            self.sp + val as u16
+            }
         };
+
+        self.c_flag = if val >= 0 {
+            if (self.sp & 0xFF) as i16 + val as i16 > 0xFF {
+                1
+            } else {
+                0
+            }
+        } else {
+            if new_sp & 0xFF <= (self.sp & 0xFF) {
+                1
+            } else {
+                0
+            }
+        };
+        self.sp = new_sp;
+
+        // if (val as i8) < 0 {
+        //     let minus_val: u8 = ((val as i8) * -1).try_into().unwrap();
+        //     self.h_flag = if (((self.sp & 0xF) as u8 + (minus_val & 0xF)) & 0x10) == 0x10 {
+        //         1
+        //     } else {
+        //         0
+        //     };
+        //     self.c_flag = if self.sp < minus_val as u16 { 1 } else { 0 };
+        // } else {
+        //     self.add_set_flags_16(&(val as u32), &(self.sp as u32), false, true, true);
+        // };
+
         self.z_flag = 0;
         self.n_flag = 0;
         self.pc += 2;
     }
     fn ld_hl_sp_i8(&mut self, _command: u8) {
-        let val = self.get_memory((self.pc + 1) as usize);
-        let (hl_val_high, hl_val_low) = split_u16(self.sp.wrapping_add((val as i8) as u16));
+        let val = self.get_memory((self.pc + 1) as usize) as i8;
+        let new_hl = self.sp.wrapping_add(val as u16);
+        self.h_flag = if val >= 0 {
+            if (self.sp & 0xF) as i8 + (val & 0xF) > 0xF {
+                1
+            } else {
+                0
+            }
+        } else {
+            if new_hl & 0xF <= self.sp & 0xF {
+                1
+            } else {
+                0
+            }
+        };
+
+        self.c_flag = if val >= 0 {
+            if (self.sp & 0xFF) as i16 + val as i16 > 0xFF {
+                1
+            } else {
+                0
+            }
+        } else {
+            if new_hl & 0xFF <= (self.sp & 0xFF) {
+                1
+            } else {
+                0
+            }
+        };
+        let (hl_val_high, hl_val_low) = split_u16(new_hl);
         self.regs[REG_H] = hl_val_high;
         self.regs[REG_L] = hl_val_low;
+        self.z_flag = 0;
+        self.n_flag = 0;
         self.pc += 2;
     }
     fn ld_sp_hl(&mut self, _command: u8) {
@@ -1763,15 +2181,15 @@ impl CentralProcessingUnit {
         self.pc += 1;
     }
     fn cb(&mut self, _command: u8) {
-        let mut addr_val_ref;
-
+        let mut addr_val_ref = 0;
+        let mut mem = false;
         let cb_command = self.get_memory((self.pc + 1) as usize);
         let (cb_command_high, cb_command_low) = split_byte(cb_command);
         let cb_command_low_second_half = cb_command_low >= 0x8;
         let bit_num = if cb_command_low_second_half {
             (cb_command_high % 4) * 2 + 1
         } else {
-            cb_command_high % 4
+            (cb_command_high % 4) * 2
         };
 
         let reg = match cb_command_low % 8 {
@@ -1784,6 +2202,7 @@ impl CentralProcessingUnit {
             0x6 => {
                 addr_val_ref =
                     self.get_memory(combine_bytes(self.regs[REG_H], self.regs[REG_L]) as usize);
+                mem = true;
                 &mut addr_val_ref
             }
 
@@ -1796,11 +2215,13 @@ impl CentralProcessingUnit {
         match cb_command_high {
             0x0 => {
                 let moved_bit = if cb_command_low_second_half {
+                    //rrc
                     let bit_0 = *reg & 1;
                     *reg >>= 1;
                     *reg += bit_0 << 7;
                     bit_0
                 } else {
+                    //rlc
                     let bit_7 = (*reg >> 7) & 1;
                     *reg <<= 1;
                     *reg += bit_7;
@@ -1814,11 +2235,13 @@ impl CentralProcessingUnit {
             }
             1 => {
                 let moved_bit = if cb_command_low_second_half {
+                    //rr
                     let bit_0 = *reg & 1;
                     *reg >>= 1;
                     *reg += self.c_flag << 7;
                     bit_0
                 } else {
+                    //rl
                     let bit_7 = (*reg >> 7) & 1;
                     *reg <<= 1;
                     *reg += self.c_flag;
@@ -1832,12 +2255,14 @@ impl CentralProcessingUnit {
             }
             2 => {
                 let moved_bit = if cb_command_low_second_half {
+                    //sra
                     let bit_7 = (*reg >> 7) & 1;
                     let bit_0 = *reg & 1;
                     *reg >>= 1;
                     *reg += bit_7 << 7;
                     bit_0
                 } else {
+                    //sla
                     let bit_7 = (*reg >> 7) & 1;
                     *reg <<= 1;
                     bit_7
@@ -1849,21 +2274,24 @@ impl CentralProcessingUnit {
             }
             0x3 => {
                 if cb_command_low_second_half {
-                    let (high_nib, low_nib) = split_byte(*reg);
-                    *reg = (low_nib << 4) + high_nib;
-                    self.c_flag = 0;
+                    //srl
+                    let bit_0 = *reg & 1;
+                    self.c_flag = bit_0;
+                    *reg >>= 1;
                     self.h_flag = 0;
                     self.n_flag = 0;
                 } else {
-                    self.c_flag = *reg & 1;
-                    *reg >>= 1;
+                    //swap
+                    let (high_nib, low_nib) = split_byte(*reg);
+                    *reg = (low_nib << 4) + high_nib;
+                    self.c_flag = 0;
                     self.h_flag = 0;
                     self.n_flag = 0;
                 }
                 self.z_flag = if *reg == 0 { 1 } else { 0 };
             }
             4..=7 => {
-                self.z_flag = (*reg >> bit_num) & 1;
+                self.z_flag = 1 - ((*reg >> bit_num) & 1);
                 self.n_flag = 0;
                 self.h_flag = 1;
             }
@@ -1878,6 +2306,102 @@ impl CentralProcessingUnit {
                 format!("Unrecognized subcommand {:X} at CB!", cb_command)
             ),
         };
+        if mem {
+            self.write_memory(
+                combine_bytes(self.regs[REG_H], self.regs[REG_L]) as usize,
+                addr_val_ref,
+            );
+        }
         self.pc += 2;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn get_blank_cpu() -> CentralProcessingUnit {
+        let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let external_ram = Arc::new(Mutex::new([0u8; 131072]));
+        let internal_ram = Arc::new(Mutex::new([0u8; 8192]));
+        let rom_bank = Arc::new(Mutex::new(0usize));
+        let ram_bank = Arc::new(Mutex::new(0usize));
+        let lcdc = Arc::new(Mutex::new(0u8));
+        let stat = Arc::new(Mutex::new(0u8));
+        let vram = Arc::new(Mutex::new([0u8; 8192]));
+        let oam = Arc::new(Mutex::new([0u8; 160]));
+        let scy = Arc::new(Mutex::new(0u8));
+        let scx = Arc::new(Mutex::new(0u8));
+        let ly = Arc::new(Mutex::new(0u8));
+        let lyc = Arc::new(Mutex::new(0u8));
+        let wy = Arc::new(Mutex::new(0u8));
+        let wx = Arc::new(Mutex::new(7u8));
+        let bgp = Arc::new(Mutex::new(0u8));
+        let ime = Arc::new(Mutex::new(0u8));
+        let interrupt_enable = Arc::new(Mutex::new(0u8));
+        let interrupt_flag = Arc::new(Mutex::new(0u8));
+        let p1 = Arc::new(Mutex::new(0u8));
+        let div = Arc::new(Mutex::new(0u8));
+        let tima = Arc::new(Mutex::new(0u8));
+        let tma = Arc::new(Mutex::new(0u8));
+        let tac = Arc::new(Mutex::new(0u8));
+        let obp0 = Arc::new(Mutex::new(0u8));
+        let obp1 = Arc::new(Mutex::new(0u8));
+        let dma_transfer = Arc::new(Mutex::new(false));
+        let dma_register = Arc::new(Mutex::new(0u8));
+        CentralProcessingUnit::new(
+            rom,
+            external_ram,
+            internal_ram,
+            rom_bank,
+            ram_bank,
+            lcdc,
+            stat,
+            vram,
+            oam,
+            scy,
+            scx,
+            ly,
+            lyc,
+            wy,
+            wx,
+            bgp,
+            ime,
+            p1,
+            div,
+            tima,
+            tma,
+            tac,
+            obp0,
+            obp1,
+            dma_transfer,
+            dma_register,
+            interrupt_enable,
+            interrupt_flag,
+        )
+    }
+    #[test]
+    fn initial_test() {
+        let mut cpu_instance = get_blank_cpu();
+        cpu_instance.z_flag = 1;
+        cpu_instance.c_flag = 0;
+        cpu_instance.h_flag = 1;
+        cpu_instance.n_flag = 1;
+        cpu_instance.pc = 0;
+        cpu_instance.regs[REG_B] = 0b01000001;
+        cpu_instance.regs[REG_C] = 0xFF;
+        cpu_instance.regs[REG_H] = 0xFF;
+        cpu_instance.regs[REG_L] = 0xFE;
+        cpu_instance.high_ram[126] = 0b11001100;
+        cpu_instance.sp = 0xFFFE;
+        (*cpu_instance.rom.lock().unwrap()).extend([0xCB, 0x16, 0x00, 0xFE, 0x00, 0b11001100]);
+
+        for _ in 0..1 {
+            cpu_instance.process();
+        }
+        //assert_eq!(cpu_instance.regs[REG_A], 0b1000);
+        assert_eq!(cpu_instance.high_ram[126], 0b10011000);
+        assert_eq!(cpu_instance.h_flag, 0);
+        assert_eq!(cpu_instance.c_flag, 1);
+        assert_eq!(cpu_instance.n_flag, 0);
     }
 }

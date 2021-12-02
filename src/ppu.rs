@@ -113,6 +113,12 @@ impl PictureProcessingUnit {
     fn get_lcd_enable_flag(&self) -> u8 {
         (*self.lcdc.lock().unwrap() >> 7) & 1
     }
+    fn get_sprite_enable_flag(&self) -> u8 {
+        (*self.lcdc.lock().unwrap() >> 1) & 1
+    }
+    fn get_bg_window_enable(&self) -> u8 {
+        *self.lcdc.lock().unwrap() & 1
+    }
     fn get_stat_lyc_lc_int_flag(&self) -> u8 {
         (*self.stat.lock().unwrap() >> 6) & 1
     }
@@ -152,7 +158,7 @@ impl PictureProcessingUnit {
                     let oam = self.oam.lock().unwrap();
                     let obj_length = self.get_obj_size();
                     let mut sprite_num = 0;
-                    for i in 0..SPIRTES_IN_OAM {
+                    'sprite_loop: for i in 0..SPIRTES_IN_OAM {
                         if (oam[i * BYTES_PER_OAM_ENTRY] > (row + 16) as u8)
                             && (oam[i * BYTES_PER_OAM_ENTRY] < (row + 16) as u8 + obj_length)
                         {
@@ -163,7 +169,7 @@ impl PictureProcessingUnit {
                             );
                             sprite_num += 1;
                             if sprite_num == 10 {
-                                break;
+                                break 'sprite_loop;
                             }
                         }
                     }
@@ -181,144 +187,155 @@ impl PictureProcessingUnit {
                     } else {
                         *self.stat.lock().unwrap() &= 0b0111111;
                     }
-                    let wx = *self.wx.lock().unwrap() as usize;
-                    let wy = *self.wy.lock().unwrap() as usize;
-                    let tile_num_begin_window = (wx - 7) / TILE_WIDTH;
-                    let window_activated = wy >= row && self.get_win_enable_flag() == 1;
-
+                    let mut row_colors = [0u8; 160];
                     let vram = if self.get_lcd_enable_flag() == 1 {
                         *self.vram.lock().unwrap()
                     } else {
                         [0u8; 8192]
                     };
-                    let bgp = *self.bgp.lock().unwrap() as usize;
-                    let color_indexes: [usize; 4] = [
-                        (bgp >> 0) & 0b11,
-                        (bgp >> 2) & 0b11,
-                        (bgp >> 4) & 0b11,
-                        (bgp >> 6) & 0b11,
-                    ];
-                    let (scx, scy) = {
-                        (
-                            *self.scx.lock().unwrap() as usize,
-                            *self.scy.lock().unwrap() as usize,
-                        )
-                    };
-                    let tile_data_flag = self.get_tile_data_flag();
-                    let bg_tilemap_start: usize = if self.get_bg_tile_map_flag() == 0 {
-                        6144
-                    } else {
-                        7168
-                    };
-                    let win_tilemap_start: usize = if self.get_win_tile_map_flag() == 0 {
-                        6144
-                    } else {
-                        7168
-                    };
-                    let total_bg_row: usize = (scy + row) as usize % BG_MAP_SIZE_PX;
+                    if self.get_bg_window_enable() == 1 {
+                        let wx = *self.wx.lock().unwrap() as usize;
+                        let wy = *self.wy.lock().unwrap() as usize;
+                        let tile_num_begin_window =
+                            (cmp::min(wx as i16 - 7, 0)) as usize / TILE_WIDTH;
+                        let window_activated = wy >= row && self.get_win_enable_flag() == 1;
 
-                    let total_bg_column = scx % BG_MAP_SIZE_PX;
-
-                    let mut px_within_row = total_bg_column % TILE_WIDTH;
-
-                    let extra_tile = px_within_row != 0;
-
-                    let extra_end_index = TILE_WIDTH - px_within_row;
-
-                    let mut end_index = 8;
-
-                    let starting_tile_map_index = TILES_PER_ROW * (total_bg_row / BG_TILE_HEIGHT)
-                        + (total_bg_column / TILE_WIDTH);
-
-                    let row_within_tile = total_bg_row % TILE_WIDTH;
-
-                    let mut column: i32 = 0;
-                    let mut row_colors = [5u8; 160];
-                    for tile_num in 0..21 {
-                        let (tile_map_index, tilemap_start) =
-                            if window_activated && tile_num >= tile_num_begin_window {
-                                (tile_num, win_tilemap_start)
-                            } else {
-                                (starting_tile_map_index + tile_num, bg_tilemap_start)
-                            };
-                        let absolute_tile_index = if tile_data_flag == 1 {
-                            vram[tilemap_start + tile_map_index as usize] as usize
-                        } else {
-                            let initial_index =
-                                vram[tilemap_start + tile_map_index as usize] as usize;
-                            if initial_index < VRAM_BLOCK_SIZE {
-                                initial_index + 2 * VRAM_BLOCK_SIZE
-                            } else {
-                                initial_index
-                            }
+                        let bgp = *self.bgp.lock().unwrap() as usize;
+                        let color_indexes: [usize; 4] = [
+                            (bgp >> 0) & 0b11,
+                            (bgp >> 2) & 0b11,
+                            (bgp >> 4) & 0b11,
+                            (bgp >> 6) & 0b11,
+                        ];
+                        let (scx, scy) = {
+                            (
+                                *self.scx.lock().unwrap() as usize,
+                                *self.scy.lock().unwrap() as usize,
+                            )
                         };
+                        let tile_data_flag = self.get_tile_data_flag();
+                        let bg_tilemap_start: usize = if self.get_bg_tile_map_flag() == 0 {
+                            6144
+                        } else {
+                            7168
+                        };
+                        let win_tilemap_start: usize = if self.get_win_tile_map_flag() == 0 {
+                            6144
+                        } else {
+                            7168
+                        };
+                        let total_bg_row: usize = (scy + row) as usize % BG_MAP_SIZE_PX;
 
-                        let tile_data_index = absolute_tile_index * BYTES_PER_TILE // getting to the starting byte
-                        + row_within_tile * BYTES_PER_TILE_ROW; //getting to the row
-                        let least_sig_byte = vram[tile_data_index as usize];
-                        let most_sig_byte = vram[(tile_data_index + 1) as usize];
-                        for pixel in px_within_row..end_index {
-                            let bgp_index = ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1)
-                                << 1)
-                                + ((least_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1))
-                                as usize;
-                            row_colors[column as usize] = color_indexes[bgp_index] as u8;
-                            canvas.set_draw_color(COLOR_MAP[color_indexes[bgp_index]]);
-                            canvas
-                                .draw_point(Point::new(column, row as i32))
-                                .expect("Failed drawing");
-                            column += 1;
-                            px_within_row = 0;
+                        let total_bg_column = scx % BG_MAP_SIZE_PX;
+
+                        let mut px_within_row = total_bg_column % TILE_WIDTH;
+
+                        let extra_tile = px_within_row != 0;
+
+                        let extra_end_index = TILE_WIDTH - px_within_row;
+
+                        let mut end_index = 8;
+
+                        let starting_tile_map_index = TILES_PER_ROW
+                            * (total_bg_row / BG_TILE_HEIGHT)
+                            + (total_bg_column / TILE_WIDTH);
+
+                        let row_within_tile = total_bg_row % TILE_WIDTH;
+
+                        let mut column: i32 = 0;
+
+                        'tile_loop: for tile_num in 0..21 {
+                            let (tile_map_index, tilemap_start) =
+                                if window_activated && tile_num >= tile_num_begin_window {
+                                    (tile_num, win_tilemap_start)
+                                } else {
+                                    (starting_tile_map_index + tile_num, bg_tilemap_start)
+                                };
+                            let absolute_tile_index = if tile_data_flag == 1 {
+                                vram[tilemap_start + tile_map_index as usize] as usize
+                            } else {
+                                let initial_index =
+                                    vram[tilemap_start + tile_map_index as usize] as usize;
+                                if initial_index < VRAM_BLOCK_SIZE {
+                                    initial_index + 2 * VRAM_BLOCK_SIZE
+                                } else {
+                                    initial_index
+                                }
+                            };
+
+                            let tile_data_index = absolute_tile_index * BYTES_PER_TILE // getting to the starting byte
+                            + row_within_tile * BYTES_PER_TILE_ROW; //getting to the row
+                            let least_sig_byte = vram[tile_data_index as usize];
+                            let most_sig_byte = vram[(tile_data_index + 1) as usize];
+                            for pixel in px_within_row..end_index {
+                                let bgp_index =
+                                    ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1) << 1)
+                                        + ((least_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1))
+                                        as usize;
+                                row_colors[column as usize] = color_indexes[bgp_index] as u8;
+                                canvas.set_draw_color(COLOR_MAP[color_indexes[bgp_index]]);
+                                canvas
+                                    .draw_point(Point::new(column, row as i32))
+                                    .expect("Failed drawing");
+                                column += 1;
+                                px_within_row = 0;
+                            }
                             if tile_num == 19 {
                                 if extra_tile {
                                     end_index = extra_end_index;
                                 } else {
-                                    break;
+                                    break 'tile_loop;
                                 }
                             }
                         }
+                    } else {
+                        canvas.set_draw_color(Color::RGB(0, 0, 0));
+                        canvas.clear();
                     }
-                    let mut x_precendence = [200u8; 160];
-                    for sprite in possible_sprites {
-                        let row_within = row - sprite[OAM_Y_INDEX] as usize + 16;
-                        let bg_over_obj = (sprite[OAM_ATTRIBUTE_INDEX] >> 7) == 1;
-                        let tile_data_index = sprite[OAM_TILE_INDEX] as usize * BYTES_PER_TILE
-                            + row_within * BYTES_PER_TILE_ROW;
-                        let least_sig_byte = vram[tile_data_index];
-                        let most_sig_byte = vram[(tile_data_index + 1)];
-                        let palette = if (sprite[OAM_ATTRIBUTE_INDEX] >> 4) & 1 == 0 {
-                            *self.obp0.lock().unwrap() as usize
-                        } else {
-                            *self.obp1.lock().unwrap() as usize
-                        };
-                        let color_indexes: [usize; 4] = [
-                            (palette >> 0) & 0b11,
-                            (palette >> 2) & 0b11,
-                            (palette >> 4) & 0b11,
-                            (palette >> 6) & 0b11,
-                        ];
-                        let x_end = sprite[OAM_X_INDEX];
-                        let x_start = cmp::max(0, x_end - 8);
-                        let mut index = TILE_WIDTH - (x_end - x_start) as usize;
-                        for x in x_start..x_end {
-                            let color_index = ((((most_sig_byte >> (TILE_WIDTH - index - 1)) & 1)
-                                << 1)
-                                + ((least_sig_byte >> (TILE_WIDTH - index - 1)) & 1))
-                                as usize;
-                            let draw_color = color_indexes[color_index];
-                            if (x_start < x_precendence[x as usize]) //no obj with priority 
-                                & (draw_color != 0)
-                            // not transparent
-                            {
-                                x_precendence[x as usize] = x_start;
-                                if !bg_over_obj || (row_colors[column as usize] == 0) {
-                                    canvas.set_draw_color(COLOR_MAP[draw_color]);
-                                    canvas
-                                        .draw_point(Point::new(x as i32, row as i32))
-                                        .expect("Failed drawing");
+
+                    if self.get_sprite_enable_flag() == 1 {
+                        let mut x_precendence = [200u8; 160];
+                        for sprite in possible_sprites {
+                            let row_within = row - sprite[OAM_Y_INDEX] as usize + 16;
+                            let bg_over_obj = (sprite[OAM_ATTRIBUTE_INDEX] >> 7) == 1;
+                            let tile_data_index = sprite[OAM_TILE_INDEX] as usize * BYTES_PER_TILE
+                                + row_within * BYTES_PER_TILE_ROW;
+                            let least_sig_byte = vram[tile_data_index];
+                            let most_sig_byte = vram[(tile_data_index + 1)];
+                            let palette = if (sprite[OAM_ATTRIBUTE_INDEX] >> 4) & 1 == 0 {
+                                *self.obp0.lock().unwrap() as usize
+                            } else {
+                                *self.obp1.lock().unwrap() as usize
+                            };
+                            let color_indexes: [usize; 4] = [
+                                (palette >> 0) & 0b11,
+                                (palette >> 2) & 0b11,
+                                (palette >> 4) & 0b11,
+                                (palette >> 6) & 0b11,
+                            ];
+                            let x_end = sprite[OAM_X_INDEX];
+                            let x_start = cmp::max(0, x_end - 8);
+                            let mut index = TILE_WIDTH - (x_end - x_start) as usize;
+                            for x in x_start..x_end {
+                                let color_index =
+                                    ((((most_sig_byte >> (TILE_WIDTH - index - 1)) & 1) << 1)
+                                        + ((least_sig_byte >> (TILE_WIDTH - index - 1)) & 1))
+                                        as usize;
+                                let draw_color = color_indexes[color_index];
+                                if (x_start < x_precendence[x as usize]) //no obj with priority 
+                                    & (draw_color != 0)
+                                // not transparent
+                                {
+                                    x_precendence[x as usize] = x_start;
+                                    if !bg_over_obj || (row_colors[x as usize] == 0) {
+                                        canvas.set_draw_color(COLOR_MAP[draw_color]);
+                                        canvas
+                                            .draw_point(Point::new(x as i32, row as i32))
+                                            .expect("Failed drawing");
+                                    }
                                 }
+                                index += 1;
                             }
-                            index += 1;
                         }
                     }
                     //spin while we're waiting for drawing pixel period to end
@@ -334,6 +351,7 @@ impl PictureProcessingUnit {
                 if self.get_stat_hblank_int_flag() == 1 {
                     *self.interrupt_flag.lock().unwrap() |= 0b00010;
                 }
+                *self.stat.lock().unwrap() &= 0b1111100;
                 let prev_p1 = *self.p1.lock().unwrap();
                 let mut directional_keys = 0xF;
                 let mut a_b_sel_start_keys = 0xF;
@@ -404,6 +422,12 @@ impl PictureProcessingUnit {
             // let cycles = (start.elapsed().as_nanos()) / NANOS_PER_DOT as u128;
             // println!("{}", cycles);
             *self.interrupt_flag.lock().unwrap() |= 0b00001;
+            {
+                let mut stat = self.stat.lock().unwrap();
+                *stat &= 0b1111100;
+                *stat |= 1;
+            }
+
             if self.get_stat_vblank_int_flag() == 1 {
                 *self.interrupt_flag.lock().unwrap() |= 0b00010;
             }
