@@ -483,7 +483,7 @@ impl CentralProcessingUnit {
     }
     pub fn run(&mut self) {
         let mut f = File::open(
-            "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\DrMario.gb",
+            "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\01-special.gb",
         )
         .expect("File problem!");
         f.read_to_end(&mut *self.rom.lock().unwrap())

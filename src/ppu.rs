@@ -1,18 +1,8 @@
-use sdl2::event::Event;
-use sdl2::keyboard::Scancode;
-use sdl2::pixels::Color;
-use sdl2::rect::Point;
 use std::cmp;
 use std::convert::TryInto;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-
-const COLOR_MAP: [Color; 4] = [
-    Color::RGB(155, 188, 15),
-    Color::RGB(139, 172, 15),
-    Color::RGB(48, 98, 48),
-    Color::RGB(15, 56, 15),
-];
 
 const TILES_PER_ROW: usize = 32;
 const BG_MAP_SIZE_PX: usize = 256;
@@ -27,9 +17,8 @@ const OAM_SCAN_DOTS: u16 = 80;
 const DRAWING_DOTS: u16 = 172;
 const HBLANK_DOTS: u16 = 204;
 const ROW_DOTS: u16 = 456;
-const TOTAL_DOTS: u32 = 77520;
-const WINDOW_WIDTH: u32 = 160;
-const WINDOW_HEIGHT: u32 = 144;
+const TOTAL_DOTS: u32 = 70224;
+
 const BYTES_PER_OAM_ENTRY: usize = 4;
 const SPIRTES_IN_OAM: usize = 40;
 const OAM_Y_INDEX: usize = 0;
@@ -51,8 +40,8 @@ pub struct PictureProcessingUnit {
     bgp: Arc<Mutex<u8>>,
     obp0: Arc<Mutex<u8>>,
     obp1: Arc<Mutex<u8>>,
-    p1: Arc<Mutex<u8>>,
     interrupt_flag: Arc<Mutex<u8>>,
+    frame_send: mpsc::Sender<[[u8; 160]; 144]>,
 }
 
 impl PictureProcessingUnit {
@@ -70,8 +59,8 @@ impl PictureProcessingUnit {
         bgp: Arc<Mutex<u8>>,
         obp0: Arc<Mutex<u8>>,
         obp1: Arc<Mutex<u8>>,
-        p1: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
+        frame_send: mpsc::Sender<[[u8; 160]; 144]>,
     ) -> PictureProcessingUnit {
         PictureProcessingUnit {
             lcdc,
@@ -88,7 +77,7 @@ impl PictureProcessingUnit {
             obp0,
             obp1,
             interrupt_flag,
-            p1,
+            frame_send,
         }
     }
     fn get_bg_tile_map_flag(&self) -> u8 {
@@ -132,19 +121,10 @@ impl PictureProcessingUnit {
         (*self.stat.lock().unwrap() >> 3) & 1
     }
     pub fn run(&mut self) {
-        let sdl_context = sdl2::init().unwrap();
-        let video_subsystem = sdl_context.video().unwrap();
-        let window = video_subsystem
-            .window("Gameboy Emulator", WINDOW_WIDTH, WINDOW_HEIGHT)
-            .position_centered()
-            .build()
-            .unwrap();
-        let mut event_pump = sdl_context.event_pump().unwrap();
-        let mut canvas = window.into_canvas().build().unwrap();
-        'running: loop {
+        loop {
             let start_time = Instant::now();
             //PIXEL DRAWING
-
+            let mut frame: [[u8; 160]; 144] = [[0; 160]; 144];
             for row in 0..SCREEN_PX_HEIGHT {
                 let mut now = Instant::now();
                 //create context for vram/oam lock to exist
@@ -242,7 +222,7 @@ impl PictureProcessingUnit {
 
                         let row_within_tile = total_bg_row % TILE_WIDTH;
 
-                        let mut column: i32 = 0;
+                        let mut column: usize = 0;
 
                         'tile_loop: for tile_num in 0..21 {
                             let (tile_map_index, tilemap_start) =
@@ -272,11 +252,9 @@ impl PictureProcessingUnit {
                                     ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1) << 1)
                                         + ((least_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1))
                                         as usize;
-                                row_colors[column as usize] = color_indexes[bgp_index] as u8;
-                                canvas.set_draw_color(COLOR_MAP[color_indexes[bgp_index]]);
-                                canvas
-                                    .draw_point(Point::new(column, row as i32))
-                                    .expect("Failed drawing");
+                                let pixel_color = color_indexes[bgp_index] as u8;
+                                row_colors[column as usize] = pixel_color as u8;
+                                frame[row][column] = pixel_color;
                                 column += 1;
                                 px_within_row = 0;
                             }
@@ -288,9 +266,6 @@ impl PictureProcessingUnit {
                                 }
                             }
                         }
-                    } else {
-                        canvas.set_draw_color(Color::RGB(0, 0, 0));
-                        canvas.clear();
                     }
 
                     if self.get_sprite_enable_flag() == 1 {
@@ -321,17 +296,14 @@ impl PictureProcessingUnit {
                                     ((((most_sig_byte >> (TILE_WIDTH - index - 1)) & 1) << 1)
                                         + ((least_sig_byte >> (TILE_WIDTH - index - 1)) & 1))
                                         as usize;
-                                let draw_color = color_indexes[color_index];
+                                let draw_color = color_indexes[color_index] as u8;
                                 if (x_start < x_precendence[x as usize]) //no obj with priority 
                                     & (draw_color != 0)
                                 // not transparent
                                 {
                                     x_precendence[x as usize] = x_start;
                                     if !bg_over_obj || (row_colors[x as usize] == 0) {
-                                        canvas.set_draw_color(COLOR_MAP[draw_color]);
-                                        canvas
-                                            .draw_point(Point::new(x as i32, row as i32))
-                                            .expect("Failed drawing");
+                                        frame[row][x as usize] = draw_color;
                                     }
                                 }
                                 index += 1;
@@ -352,74 +324,14 @@ impl PictureProcessingUnit {
                     *self.interrupt_flag.lock().unwrap() |= 0b00010;
                 }
                 *self.stat.lock().unwrap() &= 0b1111100;
-                let prev_p1 = *self.p1.lock().unwrap();
-                let mut directional_keys = 0xF;
-                let mut a_b_sel_start_keys = 0xF;
-                for event in event_pump.poll_iter() {
-                    match event {
-                        Event::Quit { .. }
-                        | Event::KeyDown {
-                            scancode: Some(Scancode::Escape),
-                            ..
-                        } => break 'running,
-                        Event::KeyDown {
-                            scancode: Some(Scancode::Z),
-                            ..
-                        } => a_b_sel_start_keys &= 0b0111,
-                        Event::KeyDown {
-                            scancode: Some(Scancode::X),
-                            ..
-                        } => a_b_sel_start_keys &= 0b1011,
-                        Event::KeyDown {
-                            scancode: Some(Scancode::A),
-                            ..
-                        } => a_b_sel_start_keys &= 0b1101,
-                        Event::KeyDown {
-                            scancode: Some(Scancode::S),
-                            ..
-                        } => a_b_sel_start_keys &= 0b1110,
-                        Event::KeyDown {
-                            scancode: Some(Scancode::Right),
-                            ..
-                        } => directional_keys &= 0b0111,
-                        Event::KeyDown {
-                            scancode: Some(Scancode::Left),
-                            ..
-                        } => directional_keys &= 0b1011,
-                        Event::KeyDown {
-                            scancode: Some(Scancode::Up),
-                            ..
-                        } => directional_keys &= 0b1101,
-                        Event::KeyDown {
-                            scancode: Some(Scancode::Down),
-                            ..
-                        } => directional_keys &= 0b1110,
-                        _ => {}
-                    }
-                }
-                //create context for mutex to drop
-                {
-                    let mut p1 = self.p1.lock().unwrap();
-                    let p14 = (*p1 >> 4) & 1;
-                    let p15 = (*p1 >> 5) & 1;
-                    *p1 |= 0b110000;
-                    if p14 == 1 {
-                        *p1 |= directional_keys;
-                    }
-                    if p15 == 1 {
-                        *p1 |= a_b_sel_start_keys;
-                    }
-                    if ((prev_p1 | *p1) - *p1) & 0xF != 0 {
-                        *self.interrupt_flag.lock().unwrap() |= 1 << 4;
-                    }
-                }
+
                 while (now.elapsed().as_nanos()) < (HBLANK_DOTS as f64 * NANOS_PER_DOT) as u128 {}
             }
             //VBLANK
 
             let mut now = Instant::now();
-
-            // let cycles = (start.elapsed().as_nanos()) / NANOS_PER_DOT as u128;
+            self.frame_send.send(frame).unwrap();
+            // let cycles = (start_time.elapsed().as_nanos()) / NANOS_PER_DOT as u128;
             // println!("{}", cycles);
             *self.interrupt_flag.lock().unwrap() |= 0b00001;
             {
@@ -435,11 +347,9 @@ impl PictureProcessingUnit {
             now = Instant::now();
             *self.ly.lock().unwrap() += 1;
 
-            while (now.elapsed().as_nanos()) < (ROW_DOTS as f64 * NANOS_PER_DOT) as u128 {}
+            // while (now.elapsed().as_nanos()) < (ROW_DOTS as f64 * NANOS_PER_DOT) as u128 {}
 
-            *self.ly.lock().unwrap() += 1;
-
-            canvas.present();
+            // *self.ly.lock().unwrap() += 1;
 
             while (start_time.elapsed().as_nanos()) < (TOTAL_DOTS as f64 * NANOS_PER_DOT) as u128 {
                 *self.ly.lock().unwrap() =

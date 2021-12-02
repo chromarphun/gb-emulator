@@ -1,7 +1,9 @@
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 mod cpu;
 mod dma;
+mod lcd;
 mod ppu;
 mod timing;
 
@@ -35,6 +37,8 @@ fn main() {
     let dma_transfer = Arc::new(Mutex::new(false));
     let dma_register = Arc::new(Mutex::new(0u8));
 
+    let (frame_send, frame_recv) = mpsc::channel::<[[u8; 160]; 144]>();
+
     let lcdc_ppu = Arc::clone(&lcdc);
     let stat_ppu = Arc::clone(&stat);
     let vram_ppu = Arc::clone(&vram);
@@ -48,8 +52,10 @@ fn main() {
     let bgp_ppu = Arc::clone(&bgp);
     let obp0_ppu = Arc::clone(&obp0);
     let obp1_ppu = Arc::clone(&obp1);
-    let p1_ppu = Arc::clone(&p1);
     let interrupt_flag_ppu = Arc::clone(&interrupt_flag);
+
+    let p1_lcd = Arc::clone(&p1);
+    let interrupt_flag_lcd = Arc::clone(&interrupt_flag);
 
     let div_timer = Arc::clone(&div);
     let tima_timer = Arc::clone(&tima);
@@ -111,8 +117,8 @@ fn main() {
         bgp_ppu,
         obp0_ppu,
         obp1_ppu,
-        p1_ppu,
         interrupt_flag_ppu,
+        frame_send,
     );
 
     let mut timer_instance = timing::Timer::new(
@@ -134,8 +140,11 @@ fn main() {
         rom_bank_dma,
         ram_bank_dma,
     );
+
+    let mut lcd_instance = lcd::DisplayUnit::new(frame_recv, interrupt_flag_lcd, p1_lcd);
     thread::spawn(move || cpu_instance.run());
     thread::spawn(move || timer_instance.run());
     thread::spawn(move || dma_instance.run());
-    ppu_instance.run();
+    thread::spawn(move || ppu_instance.run());
+    lcd_instance.run();
 }
