@@ -497,11 +497,8 @@ impl CentralProcessingUnit {
             now,
         }
     }
-    pub fn run(&mut self) {
-        let mut f = File::open(
-            "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\Tetris.gb",
-        )
-        .expect("File problem!");
+    pub fn run(&mut self, path: &str) {
+        let mut f = File::open(path).expect("File problem!");
         f.read_to_end(&mut *self.rom.lock().unwrap())
             .expect("Read issue!");
         {
@@ -660,7 +657,7 @@ impl CentralProcessingUnit {
                 if let Ok(mut mem_unlocked) = mutex {
                     mem_unlocked[addr - 0x8000] = val;
                 } else {
-                    println!("WRITE FAILED");
+                    println!("VRAM WRITE FAILED");
                 }
             }
             0xC000..=0xDFFF => {
@@ -668,7 +665,7 @@ impl CentralProcessingUnit {
                 if let Ok(mut mem_unlocked) = mutex {
                     mem_unlocked[addr - 0xC000] = val;
                 } else {
-                    println!("WRITE FAILED");
+                    println!("INTERNAL RAMWRITE FAILED");
                 }
             }
             0xE000..=0xFDFF => {
@@ -679,7 +676,7 @@ impl CentralProcessingUnit {
                 if let Ok(mut mem_unlocked) = mutex {
                     mem_unlocked[addr - 0xFE00] = val;
                 } else {
-                    println!("WRITE FAILED");
+                    println!("OAM WRITE FAILED");
                 }
             }
             0xFF00 => {

@@ -76,6 +76,7 @@ impl Timer {
             while cycle_count_mod(*current_cycle_count - start_cycle_count) <= DOTS_PER_TIME {
                 current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();
             }
+            println!("{}", *current_cycle_count - start_cycle_count);
             std::mem::drop(current_cycle_count);
         }
     }

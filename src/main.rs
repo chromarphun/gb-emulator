@@ -1,3 +1,4 @@
+use std::env;
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -177,10 +178,10 @@ fn main() {
         cycle_cond_dma,
         dma_cond_dma,
     );
-
+    let args: Vec<String> = env::args().collect();
     let mut lcd_instance =
         lcd::DisplayUnit::new(frame_recv, interrupt_flag_lcd, p1_lcd, interrupt_cond_lcd);
-    thread::spawn(move || cpu_instance.run());
+    thread::spawn(move || cpu_instance.run(&args[1]));
     thread::spawn(move || timer_instance.run());
     thread::spawn(move || dma_instance.run());
     thread::spawn(move || ppu_instance.run());
