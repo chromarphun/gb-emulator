@@ -1,8 +1,8 @@
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::prelude::*;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 const REG_A: usize = 0;
 const REG_B: usize = 1;
@@ -16,6 +16,7 @@ const CARRY_LIMIT_8: u16 = 255;
 const NANOS_PER_DOT: f64 = 238.4185791015625;
 const INTERRUPT_DOTS: u8 = 20;
 const HALT_DOTS: u8 = 10;
+const CYCLES_PER_PERIOD: u32 = 41943;
 
 #[inline]
 fn combine_bytes(high_byte: u8, low_byte: u8) -> u16 {
@@ -309,7 +310,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8); 256] {
     ]
 }
 
-fn get_cycles_map() -> [u8; 256] {
+fn get_cycles_map() -> [u32; 256] {
     [
         04, 12, 08, 08, 04, 04, 08, 04, 20, 08, 08, 08, 04, 04, 08, 04, 04, 12, 08, 08, 04, 04, 08,
         04, 12, 08, 08, 08, 04, 04, 08, 04, 08, 12, 08, 08, 04, 04, 08, 04, 08, 08, 08, 08, 04, 04,
@@ -329,7 +330,7 @@ pub struct CentralProcessingUnit {
     regs: [u8; 7],
     pc: u16,
     sp: u16,
-    cycle_modification: u8,
+    cycle_modification: u32,
     z_flag: u8,
     n_flag: u8,
     h_flag: u8,
@@ -337,7 +338,7 @@ pub struct CentralProcessingUnit {
     reenable_interrupts: bool,
     disable_interrupts: bool,
     function_map: [fn(&mut CentralProcessingUnit, u8); 256],
-    cycles_map: [u8; 256],
+    cycles_map: [u32; 256],
     rom: Arc<Mutex<Vec<u8>>>,
     external_ram: Arc<Mutex<[u8; 131072]>>,
     internal_ram: Arc<Mutex<[u8; 8192]>>,
@@ -375,6 +376,9 @@ pub struct CentralProcessingUnit {
     holding_ff01: u8,
     holding_ff02: u8,
     halting: bool,
+    cycle_count: Arc<Mutex<u32>>,
+    cycle_cond: Arc<Condvar>,
+    now: Instant,
 }
 
 impl CentralProcessingUnit {
@@ -407,6 +411,8 @@ impl CentralProcessingUnit {
         dma_register: Arc<Mutex<u8>>,
         interrupt_enable: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
+        cycle_count: Arc<Mutex<u32>>,
+        cycle_cond: Arc<Condvar>,
     ) -> CentralProcessingUnit {
         let regs = [0u8; 7];
         let pc: u16 = 0x0;
@@ -418,8 +424,8 @@ impl CentralProcessingUnit {
         let h_flag: u8 = 0;
         let c_flag: u8 = 0;
         let function_map: [fn(&mut CentralProcessingUnit, u8); 256] = get_function_map();
-        let cycles_map: [u8; 256] = get_cycles_map();
-        let cycle_modification: u8 = 0;
+        let cycles_map: [u32; 256] = get_cycles_map();
+        let cycle_modification: u32 = 0;
         let change_ime_false = false;
         let change_ime_true = false;
         let debug_var: usize = 0;
@@ -429,6 +435,7 @@ impl CentralProcessingUnit {
         let holding_ff01 = 0;
         let holding_ff02 = 0;
         let halting = false;
+        let now = Instant::now();
         CentralProcessingUnit {
             regs,
             pc,
@@ -479,11 +486,14 @@ impl CentralProcessingUnit {
             holding_ff01,
             holding_ff02,
             halting,
+            cycle_count,
+            cycle_cond,
+            now,
         }
     }
     pub fn run(&mut self) {
         let mut f = File::open(
-            "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\01-special.gb",
+            "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\Tetris.gb",
         )
         .expect("File problem!");
         f.read_to_end(&mut *self.rom.lock().unwrap())
@@ -513,6 +523,7 @@ impl CentralProcessingUnit {
                 0x3E, 0x01, 0xE0, 0x50,
             ];
             self.rom.lock().unwrap()[..256].copy_from_slice(&boot_mem);
+            self.now = Instant::now();
             while self.pc < 0x100 {
                 self.process();
             }
@@ -526,7 +537,6 @@ impl CentralProcessingUnit {
         }
     }
     fn process(&mut self) {
-        let mut now = Instant::now();
         if self.change_ime_true {
             self.change_ime_true = false;
             *self.ime.lock().unwrap() = 1;
@@ -555,7 +565,6 @@ impl CentralProcessingUnit {
             self.halting = false;
         }
         if *self.ime.lock().unwrap() == 1 && viable_interrupts != 0 {
-            now = Instant::now();
             let (mask, addr) = match viable_interrupts.trailing_zeros() {
                 0 => (0b11110, 0x40),
                 1 => (0b11101, 0x48),
@@ -571,10 +580,10 @@ impl CentralProcessingUnit {
             let (high_pc, low_pc) = split_u16(self.pc);
             self.push_stack(high_pc, low_pc);
             self.pc = addr;
-            while (now.elapsed().as_nanos()) < (INTERRUPT_DOTS as f64 * NANOS_PER_DOT) as u128 {}
+            //while (now.elapsed().as_nanos()) < (INTERRUPT_DOTS as f64 * NANOS_PER_DOT) as u128 {}
         } else {
             let command = self.get_memory(self.pc as usize) as usize;
-            if !self.in_boot_rom {
+            if self.pc == 0x89 {
                 //println!("{}", format!("pc: {:X}, command: {:X}", self.pc, command));
                 self.debug_var = 0;
             }
@@ -587,11 +596,20 @@ impl CentralProcessingUnit {
             } else {
                 self.cycles_map[command]
             };
+
             if self.debug_var == 1 {
                 self.debug_var = 0;
             }
-            if self.pc == 0xCB16 {}
-            while (now.elapsed().as_nanos()) < (cycles as f64 * NANOS_PER_DOT) as u128 {}
+            if self.regs[REG_A] == 0x64 {
+                self.debug_var = 1;
+            }
+            *self.cycle_count.lock().unwrap() += cycles;
+            self.cycle_cond.notify_all();
+            if *self.cycle_count.lock().unwrap() >= CYCLES_PER_PERIOD {
+                spin_sleep::sleep(Duration::new(0, 10_000_000).saturating_sub(self.now.elapsed()));
+                *self.cycle_count.lock().unwrap() = 0;
+                self.now = Instant::now();
+            }
         }
     }
     #[inline]
@@ -2320,6 +2338,8 @@ impl CentralProcessingUnit {
 mod tests {
     use super::*;
     fn get_blank_cpu() -> CentralProcessingUnit {
+        let cycle_count = Arc::new(Mutex::new(0u32));
+        let cycle_cond = Arc::new(Condvar::new());
         let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
         let external_ram = Arc::new(Mutex::new([0u8; 131072]));
         let internal_ram = Arc::new(Mutex::new([0u8; 8192]));
@@ -2377,6 +2397,8 @@ mod tests {
             dma_register,
             interrupt_enable,
             interrupt_flag,
+            cycle_count,
+            cycle_cond,
         )
     }
     #[test]

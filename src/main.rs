@@ -1,5 +1,5 @@
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 mod cpu;
 mod dma;
@@ -8,6 +8,8 @@ mod ppu;
 mod timing;
 
 fn main() {
+    let cycle_count = Arc::new(Mutex::new(0u32));
+    let cycle_cond = Arc::new(Condvar::new());
     let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
     let external_ram = Arc::new(Mutex::new([0u8; 131072]));
     let internal_ram = Arc::new(Mutex::new([0u8; 8192]));
@@ -39,6 +41,8 @@ fn main() {
 
     let (frame_send, frame_recv) = mpsc::channel::<[[u8; 160]; 144]>();
 
+    let cycle_count_ppu = Arc::clone(&cycle_count);
+    let cycle_cond_ppu = Arc::clone(&cycle_cond);
     let lcdc_ppu = Arc::clone(&lcdc);
     let stat_ppu = Arc::clone(&stat);
     let vram_ppu = Arc::clone(&vram);
@@ -57,12 +61,16 @@ fn main() {
     let p1_lcd = Arc::clone(&p1);
     let interrupt_flag_lcd = Arc::clone(&interrupt_flag);
 
+    let cycle_count_timer = Arc::clone(&cycle_count);
+    let cycle_cond_timer = Arc::clone(&cycle_cond);
     let div_timer = Arc::clone(&div);
     let tima_timer = Arc::clone(&tima);
     let tma_timer = Arc::clone(&tma);
     let tac_timer = Arc::clone(&tac);
     let interrupt_flag_timer = Arc::clone(&interrupt_flag);
 
+    let cycle_count_dma = Arc::clone(&cycle_count);
+    let cycle_cond_dma = Arc::clone(&cycle_cond);
     let dma_register_dma = Arc::clone(&dma_register);
     let dma_transfer_dma = Arc::clone(&dma_transfer);
     let vram_dma = Arc::clone(&vram);
@@ -102,6 +110,8 @@ fn main() {
         dma_register,
         interrupt_enable,
         interrupt_flag,
+        cycle_count,
+        cycle_cond,
     );
     let mut ppu_instance = ppu::PictureProcessingUnit::new(
         lcdc_ppu,
@@ -119,6 +129,8 @@ fn main() {
         obp1_ppu,
         interrupt_flag_ppu,
         frame_send,
+        cycle_count_ppu,
+        cycle_cond_ppu,
     );
 
     let mut timer_instance = timing::Timer::new(

@@ -1,7 +1,7 @@
 use std::cmp;
 use std::convert::TryInto;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 const TILES_PER_ROW: usize = 32;
@@ -13,11 +13,18 @@ const BYTES_PER_TILE_ROW: usize = 2;
 const SCREEN_PX_HEIGHT: usize = 144;
 const VRAM_BLOCK_SIZE: usize = 128;
 const NANOS_PER_DOT: f64 = 238.4185791015625;
-const OAM_SCAN_DOTS: u16 = 80;
-const DRAWING_DOTS: u16 = 172;
-const HBLANK_DOTS: u16 = 204;
-const ROW_DOTS: u16 = 456;
+const MICROS_PER_DOT: f64 = 0.2384185791015625;
+const OAM_SCAN_DOTS: u32 = 80;
+const OAM_SCAN_MICROS: u128 = 19;
+const DRAWING_DOTS: u32 = 172;
+const DRAWING_MICROS: u128 = 41;
+const HBLANK_DOTS: u32 = 204;
+const HBLANK_MICROS: u128 = 49;
+const ROW_DOTS: u32 = 456;
+const ROW_MICROS: u128 = 109;
 const TOTAL_DOTS: u32 = 70224;
+const TOTAL_MICROS: u128 = 16743;
+const CYCLES_PER_PERIOD: u32 = 41943;
 
 const BYTES_PER_OAM_ENTRY: usize = 4;
 const SPIRTES_IN_OAM: usize = 40;
@@ -42,6 +49,8 @@ pub struct PictureProcessingUnit {
     obp1: Arc<Mutex<u8>>,
     interrupt_flag: Arc<Mutex<u8>>,
     frame_send: mpsc::Sender<[[u8; 160]; 144]>,
+    cycle_count: Arc<Mutex<u32>>,
+    cycle_cond: Arc<Condvar>,
 }
 
 impl PictureProcessingUnit {
@@ -61,6 +70,8 @@ impl PictureProcessingUnit {
         obp1: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
         frame_send: mpsc::Sender<[[u8; 160]; 144]>,
+        cycle_count: Arc<Mutex<u32>>,
+        cycle_cond: Arc<Condvar>,
     ) -> PictureProcessingUnit {
         PictureProcessingUnit {
             lcdc,
@@ -78,6 +89,8 @@ impl PictureProcessingUnit {
             obp1,
             interrupt_flag,
             frame_send,
+            cycle_count,
+            cycle_cond,
         }
     }
     fn get_bg_tile_map_flag(&self) -> u8 {
@@ -121,16 +134,14 @@ impl PictureProcessingUnit {
         (*self.stat.lock().unwrap() >> 3) & 1
     }
     pub fn run(&mut self) {
+        let mut start_cycle_count = 0;
         loop {
-            let start_time = Instant::now();
-            //PIXEL DRAWING
-            let mut frame: [[u8; 160]; 144] = [[0; 160]; 144];
+            let mut frame: [[u8; 160]; 144] = [[1; 160]; 144];
             for row in 0..SCREEN_PX_HEIGHT {
-                let mut now = Instant::now();
                 //create context for vram/oam lock to exist
                 {
                     //OAM SCAN PERIOD
-
+                    start_cycle_count = *self.cycle_count.lock().unwrap();
                     if self.get_stat_oam_int_flag() == 1 {
                         *self.interrupt_flag.lock().unwrap() |= 0b00010;
                     }
@@ -153,11 +164,18 @@ impl PictureProcessingUnit {
                             }
                         }
                     }
-                    while (now.elapsed().as_nanos())
-                        < (OAM_SCAN_DOTS as f64 * NANOS_PER_DOT) as u128
-                    {}
-                    // DRAWOMG PERIOD
-                    now = Instant::now();
+
+                    let mut current_cycle_count = self.cycle_count.lock().unwrap();
+                    while ((*current_cycle_count as i32 + CYCLES_PER_PERIOD as i32
+                        - start_cycle_count as i32)
+                        % CYCLES_PER_PERIOD as i32)
+                        <= OAM_SCAN_DOTS as i32
+                    {
+                        current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();
+                    }
+                    std::mem::drop(current_cycle_count);
+                    // DRAWIMG PERIOD
+                    start_cycle_count = *self.cycle_count.lock().unwrap();
                     *self.ly.lock().unwrap() = row as u8;
                     if *self.lyc.lock().unwrap() == row as u8 {
                         *self.stat.lock().unwrap() |= 0b1000000;
@@ -313,26 +331,37 @@ impl PictureProcessingUnit {
                     //spin while we're waiting for drawing pixel period to end
                     //vram is still locked!
 
-                    while (now.elapsed().as_nanos()) < (DRAWING_DOTS as f64 * NANOS_PER_DOT) as u128
+                    let mut current_cycle_count = self.cycle_count.lock().unwrap();
+                    while (((*current_cycle_count + CYCLES_PER_PERIOD) as i32
+                        - start_cycle_count as i32)
+                        % CYCLES_PER_PERIOD as i32)
+                        <= DRAWING_DOTS as i32
                     {
+                        current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();
                     }
+                    std::mem::drop(current_cycle_count);
                 }
                 //HBLANK
                 //we've left vram context and now vram is accessible during HBLANK
-                now = Instant::now();
+                start_cycle_count = *self.cycle_count.lock().unwrap();
                 if self.get_stat_hblank_int_flag() == 1 {
                     *self.interrupt_flag.lock().unwrap() |= 0b00010;
                 }
                 *self.stat.lock().unwrap() &= 0b1111100;
 
-                while (now.elapsed().as_nanos()) < (HBLANK_DOTS as f64 * NANOS_PER_DOT) as u128 {}
+                let mut current_cycle_count = self.cycle_count.lock().unwrap();
+                while ((*current_cycle_count as i32 + CYCLES_PER_PERIOD as i32
+                    - start_cycle_count as i32)
+                    % CYCLES_PER_PERIOD as i32)
+                    <= HBLANK_DOTS as i32
+                {
+                    current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();
+                }
+                std::mem::drop(current_cycle_count);
             }
             //VBLANK
-
-            let mut now = Instant::now();
+            start_cycle_count = *self.cycle_count.lock().unwrap();
             self.frame_send.send(frame).unwrap();
-            // let cycles = (start_time.elapsed().as_nanos()) / NANOS_PER_DOT as u128;
-            // println!("{}", cycles);
             *self.interrupt_flag.lock().unwrap() |= 0b00001;
             {
                 let mut stat = self.stat.lock().unwrap();
@@ -343,17 +372,28 @@ impl PictureProcessingUnit {
             if self.get_stat_vblank_int_flag() == 1 {
                 *self.interrupt_flag.lock().unwrap() |= 0b00010;
             }
-            while (now.elapsed().as_nanos()) < (ROW_DOTS as f64 * NANOS_PER_DOT) as u128 {}
-            now = Instant::now();
+            let mut current_cycle_count = self.cycle_count.lock().unwrap();
+            while ((*current_cycle_count + CYCLES_PER_PERIOD - start_cycle_count)
+                % CYCLES_PER_PERIOD)
+                <= ROW_DOTS
+            {
+                current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();
+            }
+            std::mem::drop(current_cycle_count);
             *self.ly.lock().unwrap() += 1;
-
             // while (now.elapsed().as_nanos()) < (ROW_DOTS as f64 * NANOS_PER_DOT) as u128 {}
-
+            let z = 23;
             // *self.ly.lock().unwrap() += 1;
-
-            while (start_time.elapsed().as_nanos()) < (TOTAL_DOTS as f64 * NANOS_PER_DOT) as u128 {
-                *self.ly.lock().unwrap() =
-                    ((start_time.elapsed().as_nanos() / NANOS_PER_DOT as u128 - 65664) / 10) as u8;
+            for i in 2..11 {
+                let mut current_cycle_count = self.cycle_count.lock().unwrap();
+                while ((*current_cycle_count + CYCLES_PER_PERIOD - start_cycle_count)
+                    % CYCLES_PER_PERIOD)
+                    <= i * ROW_DOTS
+                {
+                    current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();
+                }
+                std::mem::drop(current_cycle_count);
+                *self.ly.lock().unwrap() += 1;
             }
         }
     }
