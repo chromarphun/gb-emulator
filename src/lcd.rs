@@ -3,7 +3,7 @@ use sdl2::keyboard::Scancode;
 use sdl2::pixels::Color;
 use sdl2::rect::Point;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 const WINDOW_WIDTH: usize = 160;
 const WINDOW_HEIGHT: usize = 144;
@@ -19,6 +19,7 @@ pub struct DisplayUnit {
     reciever: mpsc::Receiver<[[u8; 160]; 144]>,
     interrupt_flag: Arc<Mutex<u8>>,
     p1: Arc<Mutex<u8>>,
+    interrupt_cond: Arc<Condvar>,
 }
 
 impl DisplayUnit {
@@ -26,11 +27,13 @@ impl DisplayUnit {
         reciever: mpsc::Receiver<[[u8; 160]; 144]>,
         interrupt_flag: Arc<Mutex<u8>>,
         p1: Arc<Mutex<u8>>,
+        interrupt_cond: Arc<Condvar>,
     ) -> DisplayUnit {
         DisplayUnit {
             reciever,
             interrupt_flag,
             p1,
+            interrupt_cond,
         }
     }
     pub fn run(&mut self) {
@@ -123,6 +126,7 @@ impl DisplayUnit {
                 }
                 if ((prev_p1 | *p1) - *p1) & 0xF != 0 {
                     *self.interrupt_flag.lock().unwrap() |= 1 << 4;
+                    self.interrupt_cond.notify_all();
                 }
             }
         }
