@@ -379,8 +379,9 @@ pub struct CentralProcessingUnit {
     cycle_count: Arc<Mutex<i32>>,
     cycle_cond: Arc<Condvar>,
     dma_cond: Arc<Condvar>,
-    interrupt_cond: Arc<Condvar>,
+    lcdc_cond: Arc<Condvar>,
     now: Instant,
+    repeat: bool,
 }
 
 impl CentralProcessingUnit {
@@ -416,7 +417,7 @@ impl CentralProcessingUnit {
         cycle_count: Arc<Mutex<i32>>,
         cycle_cond: Arc<Condvar>,
         dma_cond: Arc<Condvar>,
-        interrupt_cond: Arc<Condvar>,
+        lcdc_cond: Arc<Condvar>,
     ) -> CentralProcessingUnit {
         let regs = [0u8; 7];
         let pc: u16 = 0x0;
@@ -440,6 +441,7 @@ impl CentralProcessingUnit {
         let holding_ff02 = 0;
         let halting = false;
         let now = Instant::now();
+        let repeat = false;
         CentralProcessingUnit {
             regs,
             pc,
@@ -493,14 +495,16 @@ impl CentralProcessingUnit {
             cycle_count,
             cycle_cond,
             dma_cond,
-            interrupt_cond,
+            lcdc_cond,
             now,
+            repeat,
         }
     }
     pub fn run(&mut self, path: &str) {
         let mut f = File::open(path).expect("File problem!");
         f.read_to_end(&mut *self.rom.lock().unwrap())
             .expect("Read issue!");
+
         {
             let mut hold_mem = [0u8; 256];
             hold_mem.copy_from_slice(&self.rom.lock().unwrap()[..256]);
@@ -544,36 +548,15 @@ impl CentralProcessingUnit {
             self.change_ime_true = false;
             *self.ime.lock().unwrap() = 1;
         }
-        if self.change_ime_false {
-            self.change_ime_false = false;
-            *self.ime.lock().unwrap() = 0;
-        }
         if self.reenable_interrupts {
             self.reenable_interrupts = false;
             self.change_ime_true = true;
         }
-        if self.disable_interrupts {
-            self.disable_interrupts = false;
-            self.change_ime_false = true;
-        }
+
         let viable_interrupts =
             *self.interrupt_flag.lock().unwrap() & *self.interrupt_enable.lock().unwrap();
-        if self.halting {
-            if *self.ime.lock().unwrap() == 1 {
-                let mut interrupt_flag = self.interrupt_flag.lock().unwrap();
-                while *interrupt_flag & *self.interrupt_enable.lock().unwrap() == 0 {
-                    interrupt_flag = self.interrupt_cond.wait(interrupt_flag).unwrap();
-                }
-            } else {
-                let mut interrupt_flag = self.interrupt_flag.lock().unwrap();
-                while *interrupt_flag == 0 {
-                    interrupt_flag = self.interrupt_cond.wait(interrupt_flag).unwrap();
-                }
-            }
-            self.pc += 1;
-            self.halting = false;
-        }
-        if *self.ime.lock().unwrap() == 1 && viable_interrupts != 0 {
+
+        if *self.ime.lock().unwrap() == 1 && viable_interrupts != 0 && !self.halting {
             let (mask, addr) = match viable_interrupts.trailing_zeros() {
                 0 => (0b11110, 0x40),
                 1 => (0b11101, 0x48),
@@ -591,10 +574,11 @@ impl CentralProcessingUnit {
             self.pc = addr;
             *self.cycle_count.lock().unwrap() += INTERRUPT_DOTS;
         } else {
+            let old_pc = self.pc;
+
             let command = self.get_memory(self.pc as usize) as usize;
-            if self.pc == 0x89 {
+            if !self.in_boot_rom {
                 //println!("{}", format!("pc: {:X}, command: {:X}", self.pc, command));
-                self.debug_var = 0;
             }
             self.debug_var = 1;
             self.function_map[command](self, command as u8);
@@ -605,13 +589,15 @@ impl CentralProcessingUnit {
             } else {
                 self.cycles_map[command]
             };
-
-            if self.debug_var == 1 {
-                self.debug_var = 0;
+            if self.repeat {
+                self.repeat = false;
+                self.pc = old_pc;
             }
+
             if self.regs[REG_A] == 0x64 {
                 self.debug_var = 1;
             }
+
             *self.cycle_count.lock().unwrap() += cycles;
             self.cycle_cond.notify_all();
             if *self.cycle_count.lock().unwrap() >= CYCLES_PER_PERIOD {
@@ -657,7 +643,7 @@ impl CentralProcessingUnit {
                 if let Ok(mut mem_unlocked) = mutex {
                     mem_unlocked[addr - 0x8000] = val;
                 } else {
-                    println!("VRAM WRITE FAILED");
+                    //println!("VRAM WRITE FAILED");
                 }
             }
             0xC000..=0xDFFF => {
@@ -665,25 +651,33 @@ impl CentralProcessingUnit {
                 if let Ok(mut mem_unlocked) = mutex {
                     mem_unlocked[addr - 0xC000] = val;
                 } else {
-                    println!("INTERNAL RAMWRITE FAILED");
+                    //println!("INTERNAL RAMWRITE FAILED");
                 }
             }
             0xE000..=0xFDFF => {
-                println!("FORBIDDEN AREA");
+                let mutex = self.internal_ram.try_lock();
+                if let Ok(mut mem_unlocked) = mutex {
+                    mem_unlocked[addr - 0xE000] = val;
+                } else {
+                    //println!("INTERNAL RAMWRITE FAILED");
+                }
             }
             0xFE00..=0xFE9F => {
                 let mutex = self.oam.try_lock();
                 if let Ok(mut mem_unlocked) = mutex {
                     mem_unlocked[addr - 0xFE00] = val;
                 } else {
-                    println!("OAM WRITE FAILED");
+                    //println!("OAM WRITE FAILED");
                 }
+            }
+            0xFEA0..=0xFEFF => {
+                //println!("FORBIDDEN AREA");
             }
             0xFF00 => {
                 *self.p1.lock().unwrap() = val;
             }
             0xFF01 => {
-                println!("{}", val as char);
+                //println!("{}", val as char);
                 self.holding_ff01 = val;
             }
             0xFF02 => {
@@ -704,11 +698,14 @@ impl CentralProcessingUnit {
             0xFF0F => {
                 *self.interrupt_flag.lock().unwrap() = val;
             }
+            0xFF10..=0xFF1E | 0xFF30..=0xFF3F | 0xFF20..=0xFF26 => {}
             0xFF40 => {
                 let mutex = self.lcdc.try_lock();
                 if let Ok(mut mem_unlocked) = mutex {
                     *mem_unlocked = val;
                 }
+                self.lcdc_cond.notify_all();
+                //println!("{}", format!("LCDC CHANGE TO {:#010b}", val));
             }
             0xFF41 => {
                 let mutex = self.stat.try_lock();
@@ -779,7 +776,10 @@ impl CentralProcessingUnit {
             0xFF80..=0xFFFE => self.high_ram[addr - 0xFF80] = val,
             0xFFFF => *self.interrupt_enable.lock().unwrap() = val,
             _ => {
-                println!("{}", format!("trying to write to 0x{:X}!", addr))
+                // println!(
+                //     "{}",
+                //     format!("trying to write to 0x{:X} with {:X}!", addr, val)
+                // )
             }
         }
     }
@@ -937,8 +937,12 @@ impl CentralProcessingUnit {
                 }
             }
             0xE000..=0xFDFF => {
-                println!("FORBIDDEN AREA");
-                0xFF
+                let mutex = self.internal_ram.try_lock();
+                if let Ok(mem_unlocked) = mutex {
+                    mem_unlocked[addr - 0xE000]
+                } else {
+                    0xFF
+                }
             }
             0xFE00..=0xFE9F => {
                 let mutex = self.oam.try_lock();
@@ -1455,7 +1459,7 @@ impl CentralProcessingUnit {
         self.z_flag = if val == 0 { 1 } else { 0 };
         self.h_flag = if (val & 0xF) == 0xF { 1 } else { 0 };
         self.n_flag = 1;
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
     }
     fn ld_reg_8(&mut self, command: u8) {
         let to_load = self.get_memory((self.pc + 1) as usize);
@@ -1816,6 +1820,13 @@ impl CentralProcessingUnit {
     }
     fn halt(&mut self, _command: u8) {
         self.halting = true;
+        if *self.interrupt_flag.lock().unwrap() & *self.interrupt_enable.lock().unwrap() != 0 {
+            self.pc += 1;
+            self.halting = false;
+            if *self.ime.lock().unwrap() == 0 {
+                self.repeat = true;
+            }
+        }
     }
     fn arthimetic_a(&mut self, command: u8) {
         let additional_val = self.get_memory((self.pc + 1) as usize);
@@ -1985,7 +1996,7 @@ impl CentralProcessingUnit {
             0xD9 => {
                 //RETI
 
-                self.reenable_interrupts = true;
+                *self.ime.lock().unwrap() = 1;
                 true
             }
             _ => panic!("{}", format!("Unrecognized command {:X} at ret!", command)),
@@ -2205,7 +2216,7 @@ impl CentralProcessingUnit {
         self.pc += 1;
     }
     fn di(&mut self, _command: u8) {
-        self.disable_interrupts = true;
+        *self.ime.lock().unwrap() = 0;
         self.pc += 1;
     }
     fn cb(&mut self, _command: u8) {

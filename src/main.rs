@@ -22,7 +22,7 @@ fn main() {
     let cycle_count = Arc::new(Mutex::new(0i32));
     let cycle_cond = Arc::new(Condvar::new());
     let dma_cond = Arc::new(Condvar::new());
-    let interrupt_cond = Arc::new(Condvar::new());
+    let lcdc_cond = Arc::new(Condvar::new());
     let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
     let external_ram = Arc::new(Mutex::new([0u8; 131072]));
     let internal_ram = Arc::new(Mutex::new([0u8; 8192]));
@@ -42,7 +42,7 @@ fn main() {
     let ime = Arc::new(Mutex::new(0u8));
     let interrupt_enable = Arc::new(Mutex::new(0u8));
     let interrupt_flag = Arc::new(Mutex::new(0u8));
-    let p1 = Arc::new(Mutex::new(0u8));
+    let p1 = Arc::new(Mutex::new(0xFFu8));
     let div = Arc::new(Mutex::new(0u8));
     let tima = Arc::new(Mutex::new(0u8));
     let tma = Arc::new(Mutex::new(0u8));
@@ -56,7 +56,7 @@ fn main() {
 
     let cycle_count_ppu = Arc::clone(&cycle_count);
     let cycle_cond_ppu = Arc::clone(&cycle_cond);
-    let interrupt_cond_ppu = Arc::clone(&interrupt_cond);
+    let lcdc_cond_ppu = Arc::clone(&lcdc_cond);
     let lcdc_ppu = Arc::clone(&lcdc);
     let stat_ppu = Arc::clone(&stat);
     let vram_ppu = Arc::clone(&vram);
@@ -73,7 +73,6 @@ fn main() {
     let interrupt_flag_ppu = Arc::clone(&interrupt_flag);
 
     let p1_lcd = Arc::clone(&p1);
-    let interrupt_cond_lcd = Arc::clone(&interrupt_cond);
     let interrupt_flag_lcd = Arc::clone(&interrupt_flag);
 
     let cycle_count_timer = Arc::clone(&cycle_count);
@@ -82,7 +81,6 @@ fn main() {
     let tima_timer = Arc::clone(&tima);
     let tma_timer = Arc::clone(&tma);
     let tac_timer = Arc::clone(&tac);
-    let interrupt_cond_timer = Arc::clone(&interrupt_cond);
     let interrupt_flag_timer = Arc::clone(&interrupt_flag);
 
     let cycle_count_dma = Arc::clone(&cycle_count);
@@ -130,7 +128,7 @@ fn main() {
         cycle_count,
         cycle_cond,
         dma_cond,
-        interrupt_cond,
+        lcdc_cond,
     );
     let mut ppu_instance = ppu::PictureProcessingUnit::new(
         lcdc_ppu,
@@ -150,7 +148,7 @@ fn main() {
         frame_send,
         cycle_count_ppu,
         cycle_cond_ppu,
-        interrupt_cond_ppu,
+        lcdc_cond_ppu,
     );
 
     let mut timer_instance = timing::Timer::new(
@@ -161,7 +159,6 @@ fn main() {
         interrupt_flag_timer,
         cycle_count_timer,
         cycle_cond_timer,
-        interrupt_cond_timer,
     );
 
     let mut dma_instance = dma::DirectMemoryAccess::new(
@@ -179,8 +176,7 @@ fn main() {
         dma_cond_dma,
     );
     let args: Vec<String> = env::args().collect();
-    let mut lcd_instance =
-        lcd::DisplayUnit::new(frame_recv, interrupt_flag_lcd, p1_lcd, interrupt_cond_lcd);
+    let mut lcd_instance = lcd::DisplayUnit::new(frame_recv, interrupt_flag_lcd, p1_lcd);
     thread::spawn(move || cpu_instance.run(&args[1]));
     thread::spawn(move || timer_instance.run());
     thread::spawn(move || dma_instance.run());

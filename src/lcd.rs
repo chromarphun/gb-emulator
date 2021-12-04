@@ -8,18 +8,18 @@ use std::sync::{Arc, Condvar, Mutex};
 const WINDOW_WIDTH: usize = 160;
 const WINDOW_HEIGHT: usize = 144;
 
-const COLOR_MAP: [Color; 4] = [
+const COLOR_MAP: [Color; 5] = [
     Color::RGB(155, 188, 15),
     Color::RGB(139, 172, 15),
     Color::RGB(48, 98, 48),
     Color::RGB(15, 56, 15),
+    Color::RGB(255, 255, 255),
 ];
 
 pub struct DisplayUnit {
     reciever: mpsc::Receiver<[[u8; 160]; 144]>,
     interrupt_flag: Arc<Mutex<u8>>,
     p1: Arc<Mutex<u8>>,
-    interrupt_cond: Arc<Condvar>,
 }
 
 impl DisplayUnit {
@@ -27,13 +27,11 @@ impl DisplayUnit {
         reciever: mpsc::Receiver<[[u8; 160]; 144]>,
         interrupt_flag: Arc<Mutex<u8>>,
         p1: Arc<Mutex<u8>>,
-        interrupt_cond: Arc<Condvar>,
     ) -> DisplayUnit {
         DisplayUnit {
             reciever,
             interrupt_flag,
             p1,
-            interrupt_cond,
         }
     }
     pub fn run(&mut self) {
@@ -118,15 +116,14 @@ impl DisplayUnit {
                 let p14 = (*p1 >> 4) & 1;
                 let p15 = (*p1 >> 5) & 1;
                 *p1 |= 0b110000;
-                if p14 == 1 {
+                if p14 == 0 {
                     *p1 |= directional_keys;
                 }
-                if p15 == 1 {
+                if p15 == 0 {
                     *p1 |= a_b_sel_start_keys;
                 }
                 if ((prev_p1 | *p1) - *p1) & 0xF != 0 {
                     *self.interrupt_flag.lock().unwrap() |= 1 << 4;
-                    self.interrupt_cond.notify_all();
                 }
             }
         }

@@ -13,6 +13,7 @@ const BYTES_PER_TILE: usize = 16;
 const BYTES_PER_TILE_ROW: usize = 2;
 const SCREEN_PX_HEIGHT: usize = 144;
 const VRAM_BLOCK_SIZE: usize = 128;
+const TILES_PER_MAP: usize = 1024;
 
 const OAM_SCAN_DOTS: i32 = 80;
 
@@ -23,8 +24,6 @@ const HBLANK_DOTS: i32 = 204;
 const ROW_DOTS: i32 = 456;
 
 const TOTAL_DOTS: i32 = 70224;
-
-const CYCLES_PER_PERIOD: i32 = 41943;
 
 const BYTES_PER_OAM_ENTRY: usize = 4;
 const SPIRTES_IN_OAM: usize = 40;
@@ -51,7 +50,7 @@ pub struct PictureProcessingUnit {
     frame_send: mpsc::Sender<[[u8; 160]; 144]>,
     cycle_count: Arc<Mutex<i32>>,
     cycle_cond: Arc<Condvar>,
-    interrupt_cond: Arc<Condvar>,
+    lcdc_cond: Arc<Condvar>,
 }
 
 impl PictureProcessingUnit {
@@ -73,7 +72,7 @@ impl PictureProcessingUnit {
         frame_send: mpsc::Sender<[[u8; 160]; 144]>,
         cycle_count: Arc<Mutex<i32>>,
         cycle_cond: Arc<Condvar>,
-        interrupt_cond: Arc<Condvar>,
+        lcdc_cond: Arc<Condvar>,
     ) -> PictureProcessingUnit {
         PictureProcessingUnit {
             lcdc,
@@ -93,7 +92,7 @@ impl PictureProcessingUnit {
             frame_send,
             cycle_count,
             cycle_cond,
-            interrupt_cond,
+            lcdc_cond,
         }
     }
     fn get_bg_tile_map_flag(&self) -> u8 {
@@ -115,9 +114,7 @@ impl PictureProcessingUnit {
             8
         }
     }
-    fn get_lcd_enable_flag(&self) -> u8 {
-        (*self.lcdc.lock().unwrap() >> 7) & 1
-    }
+
     fn get_sprite_enable_flag(&self) -> u8 {
         (*self.lcdc.lock().unwrap() >> 1) & 1
     }
@@ -139,7 +136,15 @@ impl PictureProcessingUnit {
     pub fn run(&mut self) {
         let mut start_cycle_count = 0;
         loop {
-            let mut frame: [[u8; 160]; 144] = [[1; 160]; 144];
+            let mut frame: [[u8; 160]; 144] = [[4; 160]; 144];
+            let mut lcdc = self.lcdc.lock().unwrap();
+            while (*lcdc >> 7) & 1 == 0 {
+                lcdc = self.lcdc_cond.wait(lcdc).unwrap();
+                self.frame_send.send(frame).unwrap();
+                *self.ly.lock().unwrap() = 0;
+                *self.stat.lock().unwrap() &= 0b11111100;
+            }
+            std::mem::drop(lcdc);
             for row in 0..SCREEN_PX_HEIGHT {
                 //create context for vram/oam lock to exist
                 {
@@ -152,15 +157,15 @@ impl PictureProcessingUnit {
                     }
                     if self.get_stat_oam_int_flag() == 1 {
                         *self.interrupt_flag.lock().unwrap() |= 0b00010;
-                        self.interrupt_cond.notify_all();
                     }
                     let mut possible_sprites: Vec<[u8; 4]> = Vec::new();
-                    let oam = self.oam.lock().unwrap();
+                    let oam = *self.oam.lock().unwrap();
+                    let _oam_lock = self.oam.lock().unwrap();
                     let obj_length = self.get_obj_size();
                     let mut sprite_num = 0;
                     'sprite_loop: for i in 0..SPIRTES_IN_OAM {
-                        if (oam[i * BYTES_PER_OAM_ENTRY] > (row + 16) as u8)
-                            && (oam[i * BYTES_PER_OAM_ENTRY] < (row + 16) as u8 + obj_length)
+                        if ((row + 16) as u8 >= oam[i * BYTES_PER_OAM_ENTRY])
+                            && ((row + 16) as u8 <= oam[i * BYTES_PER_OAM_ENTRY] + obj_length)
                         {
                             possible_sprites.push(
                                 oam[(i * BYTES_PER_OAM_ENTRY)..((i + 1) * BYTES_PER_OAM_ENTRY)]
@@ -182,30 +187,25 @@ impl PictureProcessingUnit {
                     }
                     std::mem::drop(current_cycle_count);
                     // DRAWING PERIOD
-
+                    start_cycle_count = *self.cycle_count.lock().unwrap();
                     {
                         let mut stat = self.stat.lock().unwrap();
                         *stat &= 0b11111100;
                         *stat |= 0b00000011;
                     }
 
-                    start_cycle_count = *self.cycle_count.lock().unwrap();
                     *self.ly.lock().unwrap() = row as u8;
                     if *self.lyc.lock().unwrap() == row as u8 {
                         *self.stat.lock().unwrap() |= 0b0000100;
                         if self.get_stat_lyc_lc_int_flag() == 1 {
                             *self.interrupt_flag.lock().unwrap() |= 0b00010;
-                            self.interrupt_cond.notify_all();
                         }
                     } else {
                         *self.stat.lock().unwrap() &= 0b1111011;
                     }
                     let mut row_colors = [0u8; 160];
-                    let vram = if self.get_lcd_enable_flag() == 1 {
-                        *self.vram.lock().unwrap()
-                    } else {
-                        [0u8; 8192]
-                    };
+                    let vram = *self.vram.lock().unwrap();
+                    let _vram_lock = self.vram.lock().unwrap();
                     if self.get_bg_window_enable() == 1 {
                         let wx = *self.wx.lock().unwrap() as usize;
                         let wy = *self.wy.lock().unwrap() as usize;
@@ -245,7 +245,7 @@ impl PictureProcessingUnit {
 
                         let extra_tile = px_within_row != 0;
 
-                        let extra_end_index = TILE_WIDTH - px_within_row;
+                        let extra_end_index = px_within_row;
 
                         let mut end_index = 8;
 
@@ -262,7 +262,10 @@ impl PictureProcessingUnit {
                                 if window_activated && tile_num >= tile_num_begin_window {
                                     (tile_num, win_tilemap_start)
                                 } else {
-                                    (starting_tile_map_index + tile_num, bg_tilemap_start)
+                                    (
+                                        (starting_tile_map_index + tile_num) % TILES_PER_MAP,
+                                        bg_tilemap_start,
+                                    )
                                 };
                             let absolute_tile_index = if tile_data_flag == 1 {
                                 vram[tilemap_start + tile_map_index as usize] as usize
@@ -286,8 +289,8 @@ impl PictureProcessingUnit {
                                         + ((least_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1))
                                         as usize;
                                 let pixel_color = color_indexes[bgp_index] as u8;
-                                row_colors[column as usize] = pixel_color as u8;
                                 frame[row][column] = pixel_color;
+                                row_colors[column as usize] = pixel_color as u8;
                                 column += 1;
                                 px_within_row = 0;
                             }
@@ -358,7 +361,6 @@ impl PictureProcessingUnit {
                 start_cycle_count = *self.cycle_count.lock().unwrap();
                 if self.get_stat_hblank_int_flag() == 1 {
                     *self.interrupt_flag.lock().unwrap() |= 0b00010;
-                    self.interrupt_cond.notify_all();
                 }
                 *self.stat.lock().unwrap() &= 0b1111100;
 
@@ -372,7 +374,6 @@ impl PictureProcessingUnit {
             start_cycle_count = *self.cycle_count.lock().unwrap();
             self.frame_send.send(frame).unwrap();
             *self.interrupt_flag.lock().unwrap() |= 0b00001;
-            self.interrupt_cond.notify_all();
             {
                 let mut stat = self.stat.lock().unwrap();
                 *stat &= 0b1111100;
@@ -381,16 +382,9 @@ impl PictureProcessingUnit {
 
             if self.get_stat_vblank_int_flag() == 1 {
                 *self.interrupt_flag.lock().unwrap() |= 0b00010;
-                self.interrupt_cond.notify_all();
             }
-            let mut current_cycle_count = self.cycle_count.lock().unwrap();
-            while cycle_count_mod(*current_cycle_count - start_cycle_count) <= ROW_DOTS {
-                current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();
-            }
-            std::mem::drop(current_cycle_count);
-            *self.ly.lock().unwrap() += 1;
 
-            for i in 2..10 {
+            for i in 1..10 {
                 let mut current_cycle_count = self.cycle_count.lock().unwrap();
                 while cycle_count_mod(*current_cycle_count - start_cycle_count) <= i * ROW_DOTS {
                     current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();

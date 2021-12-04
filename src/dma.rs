@@ -55,52 +55,56 @@ impl DirectMemoryAccess {
             while !*dma_transfer {
                 dma_transfer = self.dma_cond.wait(dma_transfer).unwrap();
             }
-            start_cycle_count = *self.cycle_count.lock().unwrap();
-            *self.dma_transfer.lock().unwrap() = false;
-            let vram = self.vram.lock().unwrap();
-            let mut oam = self.oam.lock().unwrap();
-            let rom = self.rom.lock().unwrap();
-            let external_ram = self.external_ram.lock().unwrap();
-            let internal_ram = self.internal_ram.lock().unwrap();
-            let rom_bank = *self.rom_bank.lock().unwrap();
-            let ram_bank = *self.ram_bank.lock().unwrap();
-            let reg = *self.dma_register.lock().unwrap() as usize;
-            let start_address = reg << 8;
+            *dma_transfer = false;
+            std::mem::drop(dma_transfer);
+            {
+                start_cycle_count = *self.cycle_count.lock().unwrap();
+                *self.dma_transfer.lock().unwrap() = false;
+                let vram = self.vram.lock().unwrap();
+                let mut oam = self.oam.lock().unwrap();
+                let rom = self.rom.lock().unwrap();
+                let external_ram = self.external_ram.lock().unwrap();
+                let internal_ram = self.internal_ram.lock().unwrap();
+                let rom_bank = *self.rom_bank.lock().unwrap();
+                let ram_bank = *self.ram_bank.lock().unwrap();
+                let reg = *self.dma_register.lock().unwrap() as usize;
+                let start_address = reg << 8;
 
-            match reg >> 4 {
-                0x0..=0x3 => {
-                    let end_address = (start_address + 0xA0) as usize;
-                    oam.copy_from_slice(&rom[start_address..end_address]);
+                match reg >> 4 {
+                    0x0..=0x3 => {
+                        let end_address = (start_address + 0xA0) as usize;
+                        oam.copy_from_slice(&rom[start_address..end_address]);
+                    }
+                    0x4..=0x7 => {
+                        let adjusted_start_address = 16384 * rom_bank - 0x4000 + reg;
+                        let adjusted_end_address = adjusted_start_address + 0xA0;
+                        oam.copy_from_slice(&rom[adjusted_start_address..adjusted_end_address]);
+                    }
+                    0x8..=0x9 => {
+                        let adjusted_start_address = start_address - 0x8000;
+                        let adjusted_end_address = adjusted_start_address + 0xA0;
+                        oam.copy_from_slice(&vram[adjusted_start_address..adjusted_end_address]);
+                    }
+                    0xA..=0xB => {
+                        let adjusted_start_address = 8192 * ram_bank + start_address - 0xA000;
+                        let adjusted_end_address = adjusted_start_address + 0xA0;
+                        oam.copy_from_slice(
+                            &external_ram[adjusted_start_address..adjusted_end_address],
+                        );
+                    }
+                    0xC..=0xD => {
+                        let adjusted_start_address = (start_address - 0xC000) as usize;
+                        let adjusted_end_address = adjusted_start_address + 0xA0;
+                        oam.copy_from_slice(
+                            &internal_ram[adjusted_start_address..adjusted_end_address],
+                        );
+                    }
+                    _ => {}
                 }
-                0x4..=0x7 => {
-                    let adjusted_start_address = 16384 * rom_bank - 0x4000 + reg;
-                    let adjusted_end_address = adjusted_start_address + 0xA0;
-                    oam.copy_from_slice(&rom[adjusted_start_address..adjusted_end_address]);
+                let mut current_cycle_count = self.cycle_count.lock().unwrap();
+                while cycle_count_mod(*current_cycle_count - start_cycle_count) <= DMA_DOTS {
+                    current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();
                 }
-                0x8..=0x9 => {
-                    let adjusted_start_address = start_address - 0x8000;
-                    let adjusted_end_address = adjusted_start_address + 0xA0;
-                    oam.copy_from_slice(&vram[adjusted_start_address..adjusted_end_address]);
-                }
-                0xA..=0xB => {
-                    let adjusted_start_address = 8192 * ram_bank + start_address - 0xA000;
-                    let adjusted_end_address = adjusted_start_address + 0xA0;
-                    oam.copy_from_slice(
-                        &external_ram[adjusted_start_address..adjusted_end_address],
-                    );
-                }
-                0xC..=0xD => {
-                    let adjusted_start_address = (start_address - 0xC000) as usize;
-                    let adjusted_end_address = adjusted_start_address + 0xA0;
-                    oam.copy_from_slice(
-                        &internal_ram[adjusted_start_address..adjusted_end_address],
-                    );
-                }
-                _ => {}
-            }
-            let mut current_cycle_count = self.cycle_count.lock().unwrap();
-            while cycle_count_mod(*current_cycle_count - start_cycle_count) <= DMA_DOTS {
-                current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();
             }
         }
     }

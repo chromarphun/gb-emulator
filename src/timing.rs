@@ -1,9 +1,9 @@
 use crate::cycle_count_mod;
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
 
 const DOTS_PER_TIME: i32 = 16;
-const TAC_MAPPING: [u8; 4] = [64, 1, 4, 16];
+const TAC_MAPPING: [i32; 4] = [1024, 16, 64, 256];
+const LIMIT_8: i32 = 255;
 
 pub struct Timer {
     div: Arc<Mutex<u8>>,
@@ -13,7 +13,6 @@ pub struct Timer {
     interrupt_flag: Arc<Mutex<u8>>,
     cycle_count: Arc<Mutex<i32>>,
     cycle_cond: Arc<Condvar>,
-    interrupt_cond: Arc<Condvar>,
 }
 
 impl Timer {
@@ -25,7 +24,6 @@ impl Timer {
         interrupt_flag: Arc<Mutex<u8>>,
         cycle_count: Arc<Mutex<i32>>,
         cycle_cond: Arc<Condvar>,
-        interrupt_cond: Arc<Condvar>,
     ) -> Timer {
         Timer {
             div,
@@ -35,13 +33,13 @@ impl Timer {
             interrupt_flag,
             cycle_count,
             cycle_cond,
-            interrupt_cond,
         }
     }
     pub fn run(&mut self) {
         let mut div_counter = 0;
         let mut tima_counter = 0;
         let mut prev_clock = 64;
+        let mut cycle_add: i32 = 0;
         let mut start_cycle_count = *self.cycle_count.lock().unwrap();
         loop {
             start_cycle_count = *self.cycle_count.lock().unwrap();
@@ -54,29 +52,29 @@ impl Timer {
                     prev_clock = clock;
                     0
                 };
-                tima_counter = (tima_counter + 1) % clock;
-                if tima_counter == 0 {
+                tima_counter += cycle_add;
+                {
                     let mut tima = self.tima.lock().unwrap();
-                    *tima = (*tima).wrapping_add(1);
-                    if *tima == 0 {
+                    let new_tima = tima_counter / clock;
+                    if new_tima > 255 {
                         //interrupt
                         *tima = *self.tma.lock().unwrap();
                         *self.interrupt_flag.lock().unwrap() |= 0b100;
-                        self.interrupt_cond.notify_all();
+                        tima_counter = 0;
+                    } else {
+                        *tima = new_tima as u8;
                     }
                 }
             }
 
-            div_counter = (div_counter + 1) % 16;
-            if div_counter == 0 {
-                let mut div = self.div.lock().unwrap();
-                *div = (*div).wrapping_add(1);
-            }
+            div_counter += cycle_add;
+            *self.div.lock().unwrap() = ((div_counter / 256) % 256) as u8;
+
             let mut current_cycle_count = self.cycle_count.lock().unwrap();
             while cycle_count_mod(*current_cycle_count - start_cycle_count) <= DOTS_PER_TIME {
                 current_cycle_count = self.cycle_cond.wait(current_cycle_count).unwrap();
+                cycle_add = cycle_count_mod(*current_cycle_count - start_cycle_count);
             }
-            println!("{}", *current_cycle_count - start_cycle_count);
             std::mem::drop(current_cycle_count);
         }
     }
