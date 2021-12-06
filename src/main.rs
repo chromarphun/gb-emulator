@@ -8,7 +8,7 @@ mod lcd;
 mod ppu;
 mod timing;
 
-const PERIOD_MS: i32 = 30;
+const PERIOD_MS: i32 = 5;
 const PERIOD_NS: u32 = (PERIOD_MS * 1_000_000) as u32;
 const PERIODS_PER_SECOND: i32 = 1000 / PERIOD_MS;
 const CYCLES_PER_SECOND: i32 = 4194304;
@@ -26,7 +26,7 @@ fn main() {
     let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
     let external_ram = Arc::new(Mutex::new([0u8; 131072]));
     let internal_ram = Arc::new(Mutex::new([0u8; 8192]));
-    let rom_bank = Arc::new(Mutex::new(0usize));
+    let rom_bank = Arc::new(Mutex::new(1usize));
     let ram_bank = Arc::new(Mutex::new(0usize));
     let lcdc = Arc::new(Mutex::new(0u8));
     let stat = Arc::new(Mutex::new(0u8));

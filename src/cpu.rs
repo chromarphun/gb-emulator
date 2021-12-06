@@ -2,6 +2,7 @@ use crate::{CYCLES_PER_PERIOD, PERIOD_NS};
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::prelude::*;
+use std::io::Write;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -382,6 +383,8 @@ pub struct CentralProcessingUnit {
     lcdc_cond: Arc<Condvar>,
     now: Instant,
     repeat: bool,
+    old_pc: u16,
+    log: File,
 }
 
 impl CentralProcessingUnit {
@@ -442,6 +445,10 @@ impl CentralProcessingUnit {
         let halting = false;
         let now = Instant::now();
         let repeat = false;
+        let old_pc: u16 = 0;
+        let log =
+            File::create("C://Users//chrom//Documents//Emulators//gb-emulator//src//commands.log")
+                .expect("Unable to create file");
         CentralProcessingUnit {
             regs,
             pc,
@@ -498,6 +505,8 @@ impl CentralProcessingUnit {
             lcdc_cond,
             now,
             repeat,
+            old_pc,
+            log,
         }
     }
     pub fn run(&mut self, path: &str) {
@@ -574,13 +583,22 @@ impl CentralProcessingUnit {
             self.pc = addr;
             *self.cycle_count.lock().unwrap() += INTERRUPT_DOTS;
         } else {
-            let old_pc = self.pc;
-
             let command = self.get_memory(self.pc as usize) as usize;
-            if !self.in_boot_rom {
-                //println!("{}", format!("pc: {:X}, command: {:X}", self.pc, command));
+            if !self.in_boot_rom && self.pc == 0x1AA {
+                //println!("{}", format!("pc: {:X}, command: {:X}", self.pc, command,));
+                // let write_str = format!("pc: {:X}, command: {:X} \n", self.pc, command);
+                // self.log
+                //     .write_all(write_str.as_bytes())
+                //     .expect("Logging issue");
+                self.debug_var = 1;
             }
-            self.debug_var = 1;
+            self.old_pc = self.pc;
+            let repeat_operation = if self.repeat {
+                self.repeat = false;
+                true
+            } else {
+                false
+            };
             self.function_map[command](self, command as u8);
             let cycles = if self.cycle_modification != 0 {
                 let val = self.cycle_modification;
@@ -589,19 +607,15 @@ impl CentralProcessingUnit {
             } else {
                 self.cycles_map[command]
             };
-            if self.repeat {
-                self.repeat = false;
-                self.pc = old_pc;
-            }
-
-            if self.regs[REG_A] == 0x64 {
-                self.debug_var = 1;
+            if repeat_operation {
+                self.pc = self.old_pc;
             }
 
             *self.cycle_count.lock().unwrap() += cycles;
             self.cycle_cond.notify_all();
             if *self.cycle_count.lock().unwrap() >= CYCLES_PER_PERIOD {
-                spin_sleep::sleep(Duration::new(0, PERIOD_NS).saturating_sub(self.now.elapsed()));
+                while self.now.elapsed() < Duration::new(0, PERIOD_NS) {}
+                //spin_sleep::sleep(Duration::new(0, PERIOD_NS).saturating_sub(self.now.elapsed()));
                 *self.cycle_count.lock().unwrap() = 0;
                 self.now = Instant::now();
             }
@@ -620,14 +634,16 @@ impl CentralProcessingUnit {
     }
     #[inline]
     fn push_stack(&mut self, high_val: u8, low_val: u8) {
-        self.write_memory((self.sp - 1) as usize, high_val);
-        self.write_memory((self.sp - 2) as usize, low_val);
-        self.sp -= 2;
+        self.sp = self.sp.wrapping_sub(1);
+        self.write_memory((self.sp) as usize, high_val);
+        self.sp = self.sp.wrapping_sub(1);
+        self.write_memory((self.sp) as usize, low_val);
     }
     fn pop_stack(&mut self) -> [u8; 2] {
         let val1 = self.get_memory((self.sp) as usize);
-        let val2 = self.get_memory((self.sp + 1) as usize);
-        self.sp += 2;
+        self.sp = self.sp.wrapping_add(1);
+        let val2 = self.get_memory((self.sp) as usize);
+        self.sp = self.sp.wrapping_add(1);
         [val1, val2]
     }
     fn write_memory(&mut self, addr: usize, val: u8) {
@@ -646,6 +662,14 @@ impl CentralProcessingUnit {
                     //println!("VRAM WRITE FAILED");
                 }
             }
+            // 0xA000..=0xBFFF => {
+            //     let mutex = self.external_ram.try_lock();
+            //     if let Ok(mut mem_unlocked) = mutex {
+            //         mem_unlocked[addr - 0xA000] = val;
+            //     } else {
+            //         //println!("External RAMWRITE FAILED");
+            //     }
+            // }
             0xC000..=0xDFFF => {
                 let mutex = self.internal_ram.try_lock();
                 if let Ok(mut mem_unlocked) = mutex {
@@ -677,7 +701,7 @@ impl CentralProcessingUnit {
                 *self.p1.lock().unwrap() = val;
             }
             0xFF01 => {
-                //println!("{}", val as char);
+                println!("{}", val as char);
                 self.holding_ff01 = val;
             }
             0xFF02 => {
@@ -916,6 +940,7 @@ impl CentralProcessingUnit {
                 if let Ok(mem_unlocked) = mutex {
                     (*mem_unlocked)[addr]
                 } else {
+                    println!("failed ROM Read!");
                     0xFF
                 }
             }
@@ -928,6 +953,14 @@ impl CentralProcessingUnit {
                     0xFF
                 }
             }
+            // 0xA000..=0xBFFF => {
+            //     let mutex = self.external_ram.try_lock();
+            //     if let Ok(mem_unlocked) = mutex {
+            //         mem_unlocked[addr - 0xA000]
+            //     } else {
+            //         0xFF
+            //     }
+            // }
             0xC000..=0xDFFF => {
                 let mutex = self.internal_ram.try_lock();
                 if let Ok(mem_unlocked) = mutex {
@@ -1052,7 +1085,7 @@ impl CentralProcessingUnit {
             0xFF80..=0xFFFE => self.high_ram[addr - 0xFF80],
             0xFFFF => *self.interrupt_enable.lock().unwrap(),
             _ => {
-                println!("{}", format!("trying to write to 0x{:X}!", addr));
+                println!("{}", format!("trying to get to 0x{:X}!", addr));
                 0xFF
             }
         }
@@ -1459,7 +1492,7 @@ impl CentralProcessingUnit {
         self.z_flag = if val == 0 { 1 } else { 0 };
         self.h_flag = if (val & 0xF) == 0xF { 1 } else { 0 };
         self.n_flag = 1;
-        self.pc = self.pc.wrapping_add(1);
+        self.pc += 1;
     }
     fn ld_reg_8(&mut self, command: u8) {
         let to_load = self.get_memory((self.pc + 1) as usize);

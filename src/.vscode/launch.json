@@ -10,7 +10,7 @@
             "name": "Emulator Debug",
             "program": "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\target\\debug\\gb-emulator.exe",
             "args": [
-                "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\Tetris.gb"
+                "C:\\Users\\chrom\\Documents\\Emulators\\gb-emulator\\example_roms\\DrMario.gb"
             ],
             "sourceLanguages": [
                 "rust"
