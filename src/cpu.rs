@@ -1,5 +1,4 @@
-use crate::{CYCLES_PER_PERIOD, PERIOD_NS};
-use std::convert::TryInto;
+use crate::{ADVANCE_CYCLES, CYCLES_PER_PERIOD, PERIOD_NS};
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::Write;
@@ -16,8 +15,8 @@ const REG_L: usize = 6;
 const CARRY_LIMIT_16: u32 = 65535;
 const CARRY_LIMIT_8: u16 = 255;
 const NANOS_PER_DOT: f64 = 238.4185791015625;
-const INTERRUPT_DOTS: i32 = 20;
-const HALT_DOTS: u8 = 10;
+const INTERRUPT_DOTS: u32 = 20;
+const HALT_DOTS: u32 = 10;
 
 #[inline]
 fn combine_bytes(high_byte: u8, low_byte: u8) -> u16 {
@@ -311,7 +310,7 @@ fn get_function_map() -> [fn(&mut CentralProcessingUnit, u8); 256] {
     ]
 }
 
-fn get_cycles_map() -> [i32; 256] {
+fn get_cycles_map() -> [u32; 256] {
     [
         04, 12, 08, 08, 04, 04, 08, 04, 20, 08, 08, 08, 04, 04, 08, 04, 04, 12, 08, 08, 04, 04, 08,
         04, 12, 08, 08, 08, 04, 04, 08, 04, 08, 12, 08, 08, 04, 04, 08, 04, 08, 08, 08, 08, 04, 04,
@@ -327,11 +326,34 @@ fn get_cycles_map() -> [i32; 256] {
         00, 08, 16,
     ]
 }
+
+fn get_boot_rom() -> [u8; 256] {
+    [
+        0x31, 0xFE, 0xFF, 0xAF, 0x21, 0xFF, 0x9F, 0x32, 0xCB, 0x7C, 0x20, 0xFB, 0x21, 0x26, 0xFF,
+        0x0E, 0x11, 0x3E, 0x80, 0x32, 0xE2, 0x0C, 0x3E, 0xF3, 0xE2, 0x32, 0x3E, 0x77, 0x77, 0x3E,
+        0xFC, 0xE0, 0x47, 0x11, 0x04, 0x01, 0x21, 0x10, 0x80, 0x1A, 0xCD, 0x95, 0x00, 0xCD, 0x96,
+        0x00, 0x13, 0x7B, 0xFE, 0x34, 0x20, 0xF3, 0x11, 0xD8, 0x00, 0x06, 0x08, 0x1A, 0x13, 0x22,
+        0x23, 0x05, 0x20, 0xF9, 0x3E, 0x19, 0xEA, 0x10, 0x99, 0x21, 0x2F, 0x99, 0x0E, 0x0C, 0x3D,
+        0x28, 0x08, 0x32, 0x0D, 0x20, 0xF9, 0x2E, 0x0F, 0x18, 0xF3, 0x67, 0x3E, 0x64, 0x57, 0xE0,
+        0x42, 0x3E, 0x91, 0xE0, 0x40, 0x04, 0x1E, 0x02, 0x0E, 0x0C, 0xF0, 0x44, 0xFE, 0x90, 0x20,
+        0xFA, 0x0D, 0x20, 0xF7, 0x1D, 0x20, 0xF2, 0x0E, 0x13, 0x24, 0x7C, 0x1E, 0x83, 0xFE, 0x62,
+        0x28, 0x06, 0x1E, 0xC1, 0xFE, 0x64, 0x20, 0x06, 0x7B, 0xE2, 0x0C, 0x3E, 0x87, 0xE2, 0xF0,
+        0x42, 0x90, 0xE0, 0x42, 0x15, 0x20, 0xD2, 0x05, 0x20, 0x4F, 0x16, 0x20, 0x18, 0xCB, 0x4F,
+        0x06, 0x04, 0xC5, 0xCB, 0x11, 0x17, 0xC1, 0xCB, 0x11, 0x17, 0x05, 0x20, 0xF5, 0x22, 0x23,
+        0x22, 0x23, 0xC9, 0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83,
+        0x00, 0x0C, 0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E,
+        0xE6, 0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC,
+        0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E, 0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C, 0x21,
+        0x04, 0x01, 0x11, 0xA8, 0x00, 0x1A, 0x13, 0xBE, 0x20, 0xFE, 0x23, 0x7D, 0xFE, 0x34, 0x20,
+        0xF5, 0x06, 0x19, 0x78, 0x86, 0x23, 0x05, 0x20, 0xFB, 0x86, 0x20, 0xFE, 0x3E, 0x01, 0xE0,
+        0x50,
+    ]
+}
 pub struct CentralProcessingUnit {
     regs: [u8; 7],
     pc: u16,
     sp: u16,
-    cycle_modification: i32,
+    cycle_modification: u32,
     z_flag: u8,
     n_flag: u8,
     h_flag: u8,
@@ -339,7 +361,7 @@ pub struct CentralProcessingUnit {
     reenable_interrupts: bool,
     disable_interrupts: bool,
     function_map: [fn(&mut CentralProcessingUnit, u8); 256],
-    cycles_map: [i32; 256],
+    cycles_map: [u32; 256],
     rom: Arc<Mutex<Vec<u8>>>,
     external_ram: Arc<Mutex<[u8; 131072]>>,
     internal_ram: Arc<Mutex<[u8; 8192]>>,
@@ -377,14 +399,13 @@ pub struct CentralProcessingUnit {
     holding_ff01: u8,
     holding_ff02: u8,
     halting: bool,
-    cycle_count: Arc<Mutex<i32>>,
-    cycle_cond: Arc<Condvar>,
-    dma_cond: Arc<Condvar>,
-    lcdc_cond: Arc<Condvar>,
-    now: Instant,
+    cycle_count: u32,
     repeat: bool,
     old_pc: u16,
     log: File,
+    waiting: bool,
+    cycle_goal: u32,
+    hold_mem: [u8; 256],
 }
 
 impl CentralProcessingUnit {
@@ -417,10 +438,6 @@ impl CentralProcessingUnit {
         dma_register: Arc<Mutex<u8>>,
         interrupt_enable: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
-        cycle_count: Arc<Mutex<i32>>,
-        cycle_cond: Arc<Condvar>,
-        dma_cond: Arc<Condvar>,
-        lcdc_cond: Arc<Condvar>,
     ) -> CentralProcessingUnit {
         let regs = [0u8; 7];
         let pc: u16 = 0x0;
@@ -432,8 +449,8 @@ impl CentralProcessingUnit {
         let h_flag: u8 = 0;
         let c_flag: u8 = 0;
         let function_map: [fn(&mut CentralProcessingUnit, u8); 256] = get_function_map();
-        let cycles_map: [i32; 256] = get_cycles_map();
-        let cycle_modification: i32 = 0;
+        let cycles_map: [u32; 256] = get_cycles_map();
+        let cycle_modification: u32 = 0;
         let change_ime_false = false;
         let change_ime_true = false;
         let debug_var: usize = 0;
@@ -449,6 +466,10 @@ impl CentralProcessingUnit {
         let log =
             File::create("C://Users//chrom//Documents//Emulators//gb-emulator//src//commands.log")
                 .expect("Unable to create file");
+        let waiting = false;
+        let cycle_count: u32 = 0;
+        let cycle_goal: u32 = 0;
+        let hold_mem: [u8; 256] = [0; 256];
         CentralProcessingUnit {
             regs,
             pc,
@@ -500,124 +521,107 @@ impl CentralProcessingUnit {
             holding_ff02,
             halting,
             cycle_count,
-            cycle_cond,
-            dma_cond,
-            lcdc_cond,
-            now,
             repeat,
             old_pc,
             log,
+            waiting,
+            cycle_goal,
+            hold_mem,
         }
     }
-    pub fn run(&mut self, path: &str) {
+    pub fn load_rom(&mut self, path: &str) {
         let mut f = File::open(path).expect("File problem!");
         f.read_to_end(&mut *self.rom.lock().unwrap())
             .expect("Read issue!");
-
-        {
-            let mut hold_mem = [0u8; 256];
-            hold_mem.copy_from_slice(&self.rom.lock().unwrap()[..256]);
-            let boot_mem = [
-                0x31, 0xFE, 0xFF, 0xAF, 0x21, 0xFF, 0x9F, 0x32, 0xCB, 0x7C, 0x20, 0xFB, 0x21, 0x26,
-                0xFF, 0x0E, 0x11, 0x3E, 0x80, 0x32, 0xE2, 0x0C, 0x3E, 0xF3, 0xE2, 0x32, 0x3E, 0x77,
-                0x77, 0x3E, 0xFC, 0xE0, 0x47, 0x11, 0x04, 0x01, 0x21, 0x10, 0x80, 0x1A, 0xCD, 0x95,
-                0x00, 0xCD, 0x96, 0x00, 0x13, 0x7B, 0xFE, 0x34, 0x20, 0xF3, 0x11, 0xD8, 0x00, 0x06,
-                0x08, 0x1A, 0x13, 0x22, 0x23, 0x05, 0x20, 0xF9, 0x3E, 0x19, 0xEA, 0x10, 0x99, 0x21,
-                0x2F, 0x99, 0x0E, 0x0C, 0x3D, 0x28, 0x08, 0x32, 0x0D, 0x20, 0xF9, 0x2E, 0x0F, 0x18,
-                0xF3, 0x67, 0x3E, 0x64, 0x57, 0xE0, 0x42, 0x3E, 0x91, 0xE0, 0x40, 0x04, 0x1E, 0x02,
-                0x0E, 0x0C, 0xF0, 0x44, 0xFE, 0x90, 0x20, 0xFA, 0x0D, 0x20, 0xF7, 0x1D, 0x20, 0xF2,
-                0x0E, 0x13, 0x24, 0x7C, 0x1E, 0x83, 0xFE, 0x62, 0x28, 0x06, 0x1E, 0xC1, 0xFE, 0x64,
-                0x20, 0x06, 0x7B, 0xE2, 0x0C, 0x3E, 0x87, 0xE2, 0xF0, 0x42, 0x90, 0xE0, 0x42, 0x15,
-                0x20, 0xD2, 0x05, 0x20, 0x4F, 0x16, 0x20, 0x18, 0xCB, 0x4F, 0x06, 0x04, 0xC5, 0xCB,
-                0x11, 0x17, 0xC1, 0xCB, 0x11, 0x17, 0x05, 0x20, 0xF5, 0x22, 0x23, 0x22, 0x23, 0xC9,
-                0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C,
-                0x00, 0x0D, 0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6,
-                0xDD, 0xDD, 0xD9, 0x99, 0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC,
-                0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E, 0x3C, 0x42, 0xB9, 0xA5, 0xB9, 0xA5, 0x42, 0x3C,
-                0x21, 0x04, 0x01, 0x11, 0xA8, 0x00, 0x1A, 0x13, 0xBE, 0x20, 0xFE, 0x23, 0x7D, 0xFE,
-                0x34, 0x20, 0xF5, 0x06, 0x19, 0x78, 0x86, 0x23, 0x05, 0x20, 0xFB, 0x86, 0x20, 0xFE,
-                0x3E, 0x01, 0xE0, 0x50,
-            ];
-            self.rom.lock().unwrap()[..256].copy_from_slice(&boot_mem);
-            self.now = Instant::now();
-            while self.pc < 0x100 {
-                self.process();
-            }
-            self.rom.lock().unwrap()[..256].copy_from_slice(&hold_mem);
-            println!("Made it past boot!");
-        }
-        //self.pc = 0x100;
-        self.in_boot_rom = false;
-        loop {
-            self.process();
-        }
+        self.load_boot_rom();
     }
-    fn process(&mut self) {
-        if self.change_ime_true {
-            self.change_ime_true = false;
-            *self.ime.lock().unwrap() = 1;
-        }
-        if self.reenable_interrupts {
-            self.reenable_interrupts = false;
-            self.change_ime_true = true;
-        }
-
-        let viable_interrupts =
-            *self.interrupt_flag.lock().unwrap() & *self.interrupt_enable.lock().unwrap();
-
-        if *self.ime.lock().unwrap() == 1 && viable_interrupts != 0 && !self.halting {
-            let (mask, addr) = match viable_interrupts.trailing_zeros() {
-                0 => (0b11110, 0x40),
-                1 => (0b11101, 0x48),
-                2 => (0b11011, 0x50),
-                3 => (0b10111, 0x58),
-                4 => (0b01111, 0x60),
-                _ => {
-                    panic!("Wow, how did you get here? This is the interrupt area where they are no interrupts.")
-                }
-            };
-            *self.interrupt_flag.lock().unwrap() &= mask;
-            *self.ime.lock().unwrap() = 0;
-            let (high_pc, low_pc) = split_u16(self.pc);
-            self.push_stack(high_pc, low_pc);
-            self.pc = addr;
-            *self.cycle_count.lock().unwrap() += INTERRUPT_DOTS;
+    fn load_boot_rom(&mut self) {
+        self.hold_mem
+            .copy_from_slice(&self.rom.lock().unwrap()[..256]);
+        self.rom.lock().unwrap()[..256].copy_from_slice(&get_boot_rom());
+    }
+    fn unload_boot_rom(&mut self) {
+        self.rom.lock().unwrap()[..256].copy_from_slice(&self.hold_mem);
+    }
+    pub fn advance(&mut self) {
+        if self.waiting {
+            self.cycle_count += ADVANCE_CYCLES;
+            if self.cycle_count == self.cycle_goal {
+                self.waiting = false;
+                self.cycle_count = 0;
+            }
         } else {
-            let command = self.get_memory(self.pc as usize) as usize;
-            if !self.in_boot_rom && self.pc == 0x1AA {
-                //println!("{}", format!("pc: {:X}, command: {:X}", self.pc, command,));
-                // let write_str = format!("pc: {:X}, command: {:X} \n", self.pc, command);
-                // self.log
-                //     .write_all(write_str.as_bytes())
-                //     .expect("Logging issue");
-                self.debug_var = 1;
+            if self.change_ime_true {
+                self.change_ime_true = false;
+                *self.ime.lock().unwrap() = 1;
             }
-            self.old_pc = self.pc;
-            let repeat_operation = if self.repeat {
-                self.repeat = false;
-                true
-            } else {
-                false
-            };
-            self.function_map[command](self, command as u8);
-            let cycles = if self.cycle_modification != 0 {
-                let val = self.cycle_modification;
-                self.cycle_modification = 0;
-                val
-            } else {
-                self.cycles_map[command]
-            };
-            if repeat_operation {
-                self.pc = self.old_pc;
+            if self.reenable_interrupts {
+                self.reenable_interrupts = false;
+                self.change_ime_true = true;
             }
 
-            *self.cycle_count.lock().unwrap() += cycles;
-            self.cycle_cond.notify_all();
-            if *self.cycle_count.lock().unwrap() >= CYCLES_PER_PERIOD {
-                while self.now.elapsed() < Duration::new(0, PERIOD_NS) {}
-                //spin_sleep::sleep(Duration::new(0, PERIOD_NS).saturating_sub(self.now.elapsed()));
-                *self.cycle_count.lock().unwrap() = 0;
-                self.now = Instant::now();
+            let viable_interrupts =
+                *self.interrupt_flag.lock().unwrap() & *self.interrupt_enable.lock().unwrap();
+
+            if *self.ime.lock().unwrap() == 1 && viable_interrupts != 0 && !self.halting {
+                let (mask, addr) = match viable_interrupts.trailing_zeros() {
+                    0 => (0b11110, 0x40),
+                    1 => (0b11101, 0x48),
+                    2 => (0b11011, 0x50),
+                    3 => (0b10111, 0x58),
+                    4 => (0b01111, 0x60),
+                    _ => {
+                        panic!("Wow, how did you get here? This is the interrupt area where they are no interrupts.")
+                    }
+                };
+                *self.interrupt_flag.lock().unwrap() &= mask;
+                *self.ime.lock().unwrap() = 0;
+                let (high_pc, low_pc) = split_u16(self.pc);
+                self.push_stack(high_pc, low_pc);
+                self.pc = addr;
+                self.waiting = true;
+                self.cycle_count += ADVANCE_CYCLES;
+                self.cycle_goal = INTERRUPT_DOTS;
+            } else {
+                let command = self.get_memory(self.pc as usize) as usize;
+                if !self.in_boot_rom && command == 0xFA {
+                    //println!("{}", format!("pc: {:X}, command: {:X}", self.pc, command,));
+                    // println!(
+                    //     "{}",
+                    //     format!(
+                    //         "IF: {:#010b}, IE: {:#010b}, IME: {}",
+                    //         *self.interrupt_flag.lock().unwrap(),
+                    //         *self.interrupt_enable.lock().unwrap(),
+                    //         *self.ime.lock().unwrap()
+                    //     )
+                    // );
+                    self.debug_var = 1;
+                }
+
+                self.old_pc = self.pc;
+                let repeat_operation = if self.repeat {
+                    self.repeat = false;
+                    true
+                } else {
+                    false
+                };
+                self.function_map[command](self, command as u8);
+                self.cycle_goal = if self.cycle_modification != 0 {
+                    let val = self.cycle_modification;
+                    self.cycle_modification = 0;
+                    val
+                } else {
+                    self.cycles_map[command]
+                };
+                if repeat_operation {
+                    self.pc = self.old_pc;
+                }
+                self.cycle_count += ADVANCE_CYCLES;
+                if self.cycle_count != self.cycle_goal {
+                    self.waiting = true;
+                } else {
+                    self.cycle_count = 0;
+                }
             }
         }
     }
@@ -698,10 +702,13 @@ impl CentralProcessingUnit {
                 //println!("FORBIDDEN AREA");
             }
             0xFF00 => {
-                *self.p1.lock().unwrap() = val;
+                let mut p1 = self.p1.lock().unwrap();
+                //println!("writing {}", format!("writing {:#010b}", val >> 4));
+                *p1 &= 0b001111;
+                *p1 |= val & 0b110000;
             }
             0xFF01 => {
-                println!("{}", val as char);
+                //println!("{}", val as char);
                 self.holding_ff01 = val;
             }
             0xFF02 => {
@@ -728,7 +735,6 @@ impl CentralProcessingUnit {
                 if let Ok(mut mem_unlocked) = mutex {
                     *mem_unlocked = val;
                 }
-                self.lcdc_cond.notify_all();
                 //println!("{}", format!("LCDC CHANGE TO {:#010b}", val));
             }
             0xFF41 => {
@@ -764,7 +770,6 @@ impl CentralProcessingUnit {
             0xFF46 => {
                 *self.dma_transfer.lock().unwrap() = true;
                 *self.dma_register.lock().unwrap() = val;
-                self.dma_cond.notify_all();
             }
             0xFF47 => {
                 let mutex = self.bgp.try_lock();
@@ -795,6 +800,12 @@ impl CentralProcessingUnit {
                 let mutex = self.wx.try_lock();
                 if let Ok(mut mem_unlocked) = mutex {
                     *mem_unlocked = val;
+                }
+            }
+            0xFF50 => {
+                if self.in_boot_rom {
+                    self.unload_boot_rom();
+                    self.in_boot_rom = false;
                 }
             }
             0xFF80..=0xFFFE => self.high_ram[addr - 0xFF80] = val,
@@ -934,6 +945,11 @@ impl CentralProcessingUnit {
         }
     }
     fn get_memory_rom_only(&self, addr: usize) -> u8 {
+        if *self.dma_transfer.lock().unwrap() && addr < 0xFF80 {
+            println!("FAILED READ!");
+            return 0xFF;
+        }
+
         match addr {
             0x0..=0x7FFF => {
                 let mutex = self.rom.try_lock();
@@ -1559,27 +1575,6 @@ impl CentralProcessingUnit {
         self.pc += 1;
     }
     fn daa(&mut self, _command: u8) {
-        // if self.n_flag == 0 {
-        //     // after an addition, adjust if (half-)carry occurred or if result is out of bounds
-        //     if self.c_flag == 1 || self.regs[REG_A] > 0x99 {
-        //         self.regs[REG_A] = self.regs[REG_A].wrapping_add(0x60);
-        //         self.c_flag = 1;
-        //     }
-        //     if self.h_flag == 1 || (self.regs[REG_A] & 0x0F) > 0x09 {
-        //         self.regs[REG_A] = self.regs[REG_A].wrapping_add(0x6);
-        //     }
-        // } else {
-        //     // after a subtraction, only adjust if (half-)carry occurred
-        //     if self.c_flag == 1 {
-        //         self.regs[REG_A] = self.regs[REG_A].wrapping_sub(0x60);
-        //     }
-        //     if self.h_flag == 1 {
-        //         self.regs[REG_A] = self.regs[REG_A].wrapping_sub(0x6);
-        //     }
-        // }
-        // self.pc += 1;
-        // self.z_flag = if self.regs[REG_A] == 0 { 1 } else { 0 };
-        // self.h_flag = 0;
         let mut correction = 0;
         if self.h_flag == 1 || ((self.n_flag == 0) && ((self.regs[REG_A] & 0xF) > 0x9)) {
             correction |= 0x6;
@@ -2388,100 +2383,94 @@ impl CentralProcessingUnit {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn get_blank_cpu() -> CentralProcessingUnit {
-        let cycle_count = Arc::new(Mutex::new(0i32));
-        let cycle_cond = Arc::new(Condvar::new());
-        let dma_cond = Arc::new(Condvar::new());
-        let interrupt_cond = Arc::new(Condvar::new());
-        let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
-        let external_ram = Arc::new(Mutex::new([0u8; 131072]));
-        let internal_ram = Arc::new(Mutex::new([0u8; 8192]));
-        let rom_bank = Arc::new(Mutex::new(0usize));
-        let ram_bank = Arc::new(Mutex::new(0usize));
-        let lcdc = Arc::new(Mutex::new(0u8));
-        let stat = Arc::new(Mutex::new(0u8));
-        let vram = Arc::new(Mutex::new([0u8; 8192]));
-        let oam = Arc::new(Mutex::new([0u8; 160]));
-        let scy = Arc::new(Mutex::new(0u8));
-        let scx = Arc::new(Mutex::new(0u8));
-        let ly = Arc::new(Mutex::new(0u8));
-        let lyc = Arc::new(Mutex::new(0u8));
-        let wy = Arc::new(Mutex::new(0u8));
-        let wx = Arc::new(Mutex::new(7u8));
-        let bgp = Arc::new(Mutex::new(0u8));
-        let ime = Arc::new(Mutex::new(0u8));
-        let interrupt_enable = Arc::new(Mutex::new(0u8));
-        let interrupt_flag = Arc::new(Mutex::new(0u8));
-        let p1 = Arc::new(Mutex::new(0u8));
-        let div = Arc::new(Mutex::new(0u8));
-        let tima = Arc::new(Mutex::new(0u8));
-        let tma = Arc::new(Mutex::new(0u8));
-        let tac = Arc::new(Mutex::new(0u8));
-        let obp0 = Arc::new(Mutex::new(0u8));
-        let obp1 = Arc::new(Mutex::new(0u8));
-        let dma_transfer = Arc::new(Mutex::new(false));
-        let dma_register = Arc::new(Mutex::new(0u8));
-        CentralProcessingUnit::new(
-            rom,
-            external_ram,
-            internal_ram,
-            rom_bank,
-            ram_bank,
-            lcdc,
-            stat,
-            vram,
-            oam,
-            scy,
-            scx,
-            ly,
-            lyc,
-            wy,
-            wx,
-            bgp,
-            ime,
-            p1,
-            div,
-            tima,
-            tma,
-            tac,
-            obp0,
-            obp1,
-            dma_transfer,
-            dma_register,
-            interrupt_enable,
-            interrupt_flag,
-            cycle_count,
-            cycle_cond,
-            dma_cond,
-            interrupt_cond,
-        )
-    }
-    #[test]
-    fn initial_test() {
-        let mut cpu_instance = get_blank_cpu();
-        cpu_instance.z_flag = 1;
-        cpu_instance.c_flag = 0;
-        cpu_instance.h_flag = 1;
-        cpu_instance.n_flag = 1;
-        cpu_instance.pc = 0;
-        cpu_instance.regs[REG_B] = 0b01000001;
-        cpu_instance.regs[REG_C] = 0xFF;
-        cpu_instance.regs[REG_H] = 0xFF;
-        cpu_instance.regs[REG_L] = 0xFE;
-        cpu_instance.high_ram[126] = 0b11001100;
-        cpu_instance.sp = 0xFFFE;
-        (*cpu_instance.rom.lock().unwrap()).extend([0xCB, 0x16, 0x00, 0xFE, 0x00, 0b11001100]);
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     fn get_blank_cpu() -> CentralProcessingUnit {
+//         let cycle_count = Arc::new(Mutex::new(0i32));
+//         let cycle_cond = Arc::new(Condvar::new());
+//         let dma_cond = Arc::new(Condvar::new());
+//         let interrupt_cond = Arc::new(Condvar::new());
+//         let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
+//         let external_ram = Arc::new(Mutex::new([0u8; 131072]));
+//         let internal_ram = Arc::new(Mutex::new([0u8; 8192]));
+//         let rom_bank = Arc::new(Mutex::new(0usize));
+//         let ram_bank = Arc::new(Mutex::new(0usize));
+//         let lcdc = Arc::new(Mutex::new(0u8));
+//         let stat = Arc::new(Mutex::new(0u8));
+//         let vram = Arc::new(Mutex::new([0u8; 8192]));
+//         let oam = Arc::new(Mutex::new([0u8; 160]));
+//         let scy = Arc::new(Mutex::new(0u8));
+//         let scx = Arc::new(Mutex::new(0u8));
+//         let ly = Arc::new(Mutex::new(0u8));
+//         let lyc = Arc::new(Mutex::new(0u8));
+//         let wy = Arc::new(Mutex::new(0u8));
+//         let wx = Arc::new(Mutex::new(7u8));
+//         let bgp = Arc::new(Mutex::new(0u8));
+//         let ime = Arc::new(Mutex::new(0u8));
+//         let interrupt_enable = Arc::new(Mutex::new(0u8));
+//         let interrupt_flag = Arc::new(Mutex::new(0u8));
+//         let p1 = Arc::new(Mutex::new(0u8));
+//         let div = Arc::new(Mutex::new(0u8));
+//         let tima = Arc::new(Mutex::new(0u8));
+//         let tma = Arc::new(Mutex::new(0u8));
+//         let tac = Arc::new(Mutex::new(0u8));
+//         let obp0 = Arc::new(Mutex::new(0u8));
+//         let obp1 = Arc::new(Mutex::new(0u8));
+//         let dma_transfer = Arc::new(Mutex::new(false));
+//         let dma_register = Arc::new(Mutex::new(0u8));
+//         CentralProcessingUnit::new(
+//             rom,
+//             external_ram,
+//             internal_ram,
+//             rom_bank,
+//             ram_bank,
+//             lcdc,
+//             stat,
+//             vram,
+//             oam,
+//             scy,
+//             scx,
+//             ly,
+//             lyc,
+//             wy,
+//             wx,
+//             bgp,
+//             ime,
+//             p1,
+//             div,
+//             tima,
+//             tma,
+//             tac,
+//             obp0,
+//             obp1,
+//             dma_transfer,
+//             dma_register,
+//             interrupt_enable,
+//             interrupt_flag,
+//             cycle_count,
+//         )
+//     }
+//     #[test]
+//     fn initial_test() {
+//         let mut cpu_instance = get_blank_cpu();
+//         cpu_instance.z_flag = 1;
+//         cpu_instance.c_flag = 0;
+//         cpu_instance.h_flag = 1;
+//         cpu_instance.n_flag = 1;
+//         cpu_instance.pc = 0;
+//         cpu_instance.regs[REG_B] = 0b01000001;
+//         cpu_instance.regs[REG_C] = 0xFF;
+//         cpu_instance.regs[REG_H] = 0xFF;
+//         cpu_instance.regs[REG_L] = 0xFE;
+//         cpu_instance.high_ram[126] = 0b11001100;
+//         cpu_instance.sp = 0xFFFE;
+//         (*cpu_instance.rom.lock().unwrap()).extend([0xCB, 0x16, 0x00, 0xFE, 0x00, 0b11001100]);
 
-        for _ in 0..1 {
-            cpu_instance.process();
-        }
-        //assert_eq!(cpu_instance.regs[REG_A], 0b1000);
-        assert_eq!(cpu_instance.high_ram[126], 0b10011000);
-        assert_eq!(cpu_instance.h_flag, 0);
-        assert_eq!(cpu_instance.c_flag, 1);
-        assert_eq!(cpu_instance.n_flag, 0);
-    }
-}
+//         //assert_eq!(cpu_instance.regs[REG_A], 0b1000);
+//         assert_eq!(cpu_instance.high_ram[126], 0b10011000);
+//         assert_eq!(cpu_instance.h_flag, 0);
+//         assert_eq!(cpu_instance.c_flag, 1);
+//         assert_eq!(cpu_instance.n_flag, 0);
+//     }
+// }

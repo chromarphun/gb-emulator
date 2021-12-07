@@ -6,23 +6,18 @@ mod cpu;
 mod dma;
 mod lcd;
 mod ppu;
+use std::time::{Duration, Instant};
 mod timing;
 
-const PERIOD_MS: i32 = 5;
+const PERIOD_MS: u32 = 5;
 const PERIOD_NS: u32 = (PERIOD_MS * 1_000_000) as u32;
-const PERIODS_PER_SECOND: i32 = 1000 / PERIOD_MS;
-const CYCLES_PER_SECOND: i32 = 4194304;
-const CYCLES_PER_PERIOD: i32 = CYCLES_PER_SECOND / PERIODS_PER_SECOND;
-
-fn cycle_count_mod(val: i32) -> i32 {
-    (val + CYCLES_PER_PERIOD) % CYCLES_PER_PERIOD
-}
+const PERIODS_PER_SECOND: u32 = 1000 / PERIOD_MS;
+const CYCLES_PER_SECOND: u32 = 4194304;
+const CYCLES_PER_PERIOD: u32 = CYCLES_PER_SECOND / PERIODS_PER_SECOND;
+const ADVANCE_CYCLES: u32 = 4;
+const ADVANCES_PER_PERIOD: u32 = CYCLES_PER_PERIOD / ADVANCE_CYCLES;
 
 fn main() {
-    let cycle_count = Arc::new(Mutex::new(0i32));
-    let cycle_cond = Arc::new(Condvar::new());
-    let dma_cond = Arc::new(Condvar::new());
-    let lcdc_cond = Arc::new(Condvar::new());
     let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
     let external_ram = Arc::new(Mutex::new([0u8; 131072]));
     let internal_ram = Arc::new(Mutex::new([0u8; 8192]));
@@ -54,9 +49,6 @@ fn main() {
 
     let (frame_send, frame_recv) = mpsc::channel::<[[u8; 160]; 144]>();
 
-    let cycle_count_ppu = Arc::clone(&cycle_count);
-    let cycle_cond_ppu = Arc::clone(&cycle_cond);
-    let lcdc_cond_ppu = Arc::clone(&lcdc_cond);
     let lcdc_ppu = Arc::clone(&lcdc);
     let stat_ppu = Arc::clone(&stat);
     let vram_ppu = Arc::clone(&vram);
@@ -75,17 +67,12 @@ fn main() {
     let p1_lcd = Arc::clone(&p1);
     let interrupt_flag_lcd = Arc::clone(&interrupt_flag);
 
-    let cycle_count_timer = Arc::clone(&cycle_count);
-    let cycle_cond_timer = Arc::clone(&cycle_cond);
     let div_timer = Arc::clone(&div);
     let tima_timer = Arc::clone(&tima);
     let tma_timer = Arc::clone(&tma);
     let tac_timer = Arc::clone(&tac);
     let interrupt_flag_timer = Arc::clone(&interrupt_flag);
 
-    let cycle_count_dma = Arc::clone(&cycle_count);
-    let cycle_cond_dma = Arc::clone(&cycle_cond);
-    let dma_cond_dma = Arc::clone(&dma_cond);
     let dma_register_dma = Arc::clone(&dma_register);
     let dma_transfer_dma = Arc::clone(&dma_transfer);
     let vram_dma = Arc::clone(&vram);
@@ -125,10 +112,6 @@ fn main() {
         dma_register,
         interrupt_enable,
         interrupt_flag,
-        cycle_count,
-        cycle_cond,
-        dma_cond,
-        lcdc_cond,
     );
     let mut ppu_instance = ppu::PictureProcessingUnit::new(
         lcdc_ppu,
@@ -146,9 +129,6 @@ fn main() {
         obp1_ppu,
         interrupt_flag_ppu,
         frame_send,
-        cycle_count_ppu,
-        cycle_cond_ppu,
-        lcdc_cond_ppu,
     );
 
     let mut timer_instance = timing::Timer::new(
@@ -157,8 +137,6 @@ fn main() {
         tma_timer,
         tac_timer,
         interrupt_flag_timer,
-        cycle_count_timer,
-        cycle_cond_timer,
     );
 
     let mut dma_instance = dma::DirectMemoryAccess::new(
@@ -171,15 +149,25 @@ fn main() {
         internal_ram_dma,
         rom_bank_dma,
         ram_bank_dma,
-        cycle_count_dma,
-        cycle_cond_dma,
-        dma_cond_dma,
     );
     let args: Vec<String> = env::args().collect();
     let mut lcd_instance = lcd::DisplayUnit::new(frame_recv, interrupt_flag_lcd, p1_lcd);
-    thread::spawn(move || cpu_instance.run(&args[1]));
-    thread::spawn(move || timer_instance.run());
-    thread::spawn(move || dma_instance.run());
-    thread::spawn(move || ppu_instance.run());
+    cpu_instance.load_rom(&args[1]);
+
+    thread::spawn(move || loop {
+        let now = Instant::now();
+        for _ in 0..ADVANCES_PER_PERIOD {
+            cpu_instance.advance();
+            ppu_instance.advance();
+            timer_instance.advance();
+            dma_instance.advance();
+            spin_sleep::sleep(Duration::new(0, PERIOD_NS).saturating_sub(now.elapsed()));
+        }
+    });
+    // thread::spawn(move || cpu_instance.run(&args[1]));
+    // thread::spawn(move || timer_instance.run());
+    // thread::spawn(move || dma_instance.run());
+    // thread::spawn(move || ppu_instance.run());
+
     lcd_instance.run();
 }

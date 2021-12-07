@@ -4,6 +4,7 @@ use sdl2::pixels::Color;
 use sdl2::rect::Point;
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 const WINDOW_WIDTH: usize = 160;
 const WINDOW_HEIGHT: usize = 144;
@@ -49,7 +50,7 @@ impl DisplayUnit {
         let mut event_pump = sdl_context.event_pump().unwrap();
         let mut canvas = window.into_canvas().build().unwrap();
         'running: loop {
-            let frame_option = self.reciever.try_recv();
+            let frame_option = self.reciever.recv();
             match frame_option {
                 Ok(frame) => {
                     for row in 0..WINDOW_HEIGHT {
@@ -78,7 +79,9 @@ impl DisplayUnit {
                     Event::KeyDown {
                         scancode: Some(Scancode::Z),
                         ..
-                    } => a_b_sel_start_keys &= 0b0111,
+                    } => {
+                        a_b_sel_start_keys &= 0b0111;
+                    }
                     Event::KeyDown {
                         scancode: Some(Scancode::X),
                         ..
@@ -113,16 +116,27 @@ impl DisplayUnit {
             //create context for mutex to drop
             {
                 let mut p1 = self.p1.lock().unwrap();
+
                 let p14 = (*p1 >> 4) & 1;
                 let p15 = (*p1 >> 5) & 1;
-                *p1 |= 0b110000;
+                let mut new_bits = 0xF;
+                *p1 &= 0b110000;
                 if p14 == 0 {
-                    *p1 |= directional_keys;
+                    new_bits &= directional_keys;
                 }
                 if p15 == 0 {
-                    *p1 |= a_b_sel_start_keys;
+                    new_bits &= a_b_sel_start_keys;
                 }
+                *p1 += new_bits;
+
                 if ((prev_p1 | *p1) - *p1) & 0xF != 0 {
+                    println!(
+                        "{}",
+                        format!(
+                            "sending joypad interrupt! new: {:#010b}, old:{:#010b}, also directional: {:#010b} and ab etc: {:#010b}, new_bits: {:#010b}",
+                            *p1, prev_p1, directional_keys, a_b_sel_start_keys, new_bits
+                        )
+                    );
                     *self.interrupt_flag.lock().unwrap() |= 1 << 4;
                 }
             }
