@@ -359,11 +359,10 @@ pub struct CentralProcessingUnit {
     h_flag: u8,
     c_flag: u8,
     reenable_interrupts: bool,
-    disable_interrupts: bool,
     function_map: [fn(&mut CentralProcessingUnit, u8); 256],
     cycles_map: [u32; 256],
     rom: Arc<Mutex<Vec<u8>>>,
-    external_ram: Arc<Mutex<[u8; 131072]>>,
+    external_ram: Arc<Mutex<Vec<u8>>>,
     internal_ram: Arc<Mutex<[u8; 8192]>>,
     high_ram: [u8; 127],
     rom_bank: Arc<Mutex<usize>>,
@@ -406,12 +405,14 @@ pub struct CentralProcessingUnit {
     waiting: bool,
     cycle_goal: u32,
     hold_mem: [u8; 256],
+    directional_presses: Arc<Mutex<u8>>,
+    action_presses: Arc<Mutex<u8>>,
 }
 
 impl CentralProcessingUnit {
     pub fn new(
         rom: Arc<Mutex<Vec<u8>>>,
-        external_ram: Arc<Mutex<[u8; 131072]>>,
+        external_ram: Arc<Mutex<Vec<u8>>>,
         internal_ram: Arc<Mutex<[u8; 8192]>>,
         rom_bank: Arc<Mutex<usize>>,
         ram_bank: Arc<Mutex<usize>>,
@@ -438,12 +439,13 @@ impl CentralProcessingUnit {
         dma_register: Arc<Mutex<u8>>,
         interrupt_enable: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
+        directional_presses: Arc<Mutex<u8>>,
+        action_presses: Arc<Mutex<u8>>,
     ) -> CentralProcessingUnit {
         let regs = [0u8; 7];
         let pc: u16 = 0x0;
         let sp: u16 = 0xFFFE;
         let reenable_interrupts: bool = false;
-        let disable_interrupts: bool = false;
         let z_flag: u8 = 0;
         let n_flag: u8 = 0;
         let h_flag: u8 = 0;
@@ -480,7 +482,6 @@ impl CentralProcessingUnit {
             h_flag,
             c_flag,
             reenable_interrupts,
-            disable_interrupts,
             function_map,
             cycles_map,
             rom,
@@ -527,6 +528,8 @@ impl CentralProcessingUnit {
             waiting,
             cycle_goal,
             hold_mem,
+            directional_presses,
+            action_presses,
         }
     }
     pub fn load_rom(&mut self, path: &str) {
@@ -574,6 +577,7 @@ impl CentralProcessingUnit {
                         panic!("Wow, how did you get here? This is the interrupt area where they are no interrupts.")
                     }
                 };
+                //println!("interrupt!!");
                 *self.interrupt_flag.lock().unwrap() &= mask;
                 *self.ime.lock().unwrap() = 0;
                 let (high_pc, low_pc) = split_u16(self.pc);
@@ -584,8 +588,8 @@ impl CentralProcessingUnit {
                 self.cycle_goal = INTERRUPT_DOTS;
             } else {
                 let command = self.get_memory(self.pc as usize) as usize;
-                if !self.in_boot_rom && command == 0xFA {
-                    //println!("{}", format!("pc: {:X}, command: {:X}", self.pc, command,));
+                if !self.in_boot_rom && self.pc == 0x2A8 {
+                    // println!("{}", format!("pc: {:X}, command: {:X}", self.pc, command,));
                     // println!(
                     //     "{}",
                     //     format!(
@@ -703,9 +707,24 @@ impl CentralProcessingUnit {
             }
             0xFF00 => {
                 let mut p1 = self.p1.lock().unwrap();
-                //println!("writing {}", format!("writing {:#010b}", val >> 4));
+                let prev_p1 = *p1;
                 *p1 &= 0b001111;
                 *p1 |= val & 0b110000;
+                let p14 = (*p1 >> 4) & 1;
+                let p15 = (*p1 >> 5) & 1;
+                let mut new_bits = 0xF;
+                *p1 &= 0b110000;
+
+                if p14 == 0 {
+                    new_bits &= *self.directional_presses.lock().unwrap();
+                }
+                if p15 == 0 {
+                    new_bits &= *self.action_presses.lock().unwrap();
+                }
+                *p1 += new_bits;
+                if ((prev_p1 | *p1) - *p1) & 0xF != 0 {
+                    *self.interrupt_flag.lock().unwrap() |= 1 << 4;
+                }
             }
             0xFF01 => {
                 //println!("{}", val as char);
@@ -1101,7 +1120,7 @@ impl CentralProcessingUnit {
             0xFF80..=0xFFFE => self.high_ram[addr - 0xFF80],
             0xFFFF => *self.interrupt_enable.lock().unwrap(),
             _ => {
-                println!("{}", format!("trying to get to 0x{:X}!", addr));
+                // println!("{}", format!("trying to get to 0x{:X}!", addr));
                 0xFF
             }
         }

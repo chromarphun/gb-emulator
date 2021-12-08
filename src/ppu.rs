@@ -70,6 +70,7 @@ pub struct PictureProcessingUnit {
     current_sprite_drawing: usize,
     bg_win_enable: bool,
     obj_enable: bool,
+    frame_num: u32,
 }
 
 impl PictureProcessingUnit {
@@ -121,6 +122,7 @@ impl PictureProcessingUnit {
         let current_sprite_drawing = 0;
         let bg_win_enable = true;
         let obj_enable = true;
+        let frame_num = 0;
         PictureProcessingUnit {
             lcdc,
             stat,
@@ -162,6 +164,7 @@ impl PictureProcessingUnit {
             current_sprite_drawing,
             bg_win_enable,
             obj_enable,
+            frame_num,
         }
     }
     fn get_bg_tile_map_flag(&self) -> u8 {
@@ -226,19 +229,14 @@ impl PictureProcessingUnit {
     }
 
     pub fn advance(&mut self) {
-        if self.get_ppu_enable() == 0 {
-            self.set_mode(2);
-            self.cycle_count = 0;
-            self.starting = true;
-            *self.ly.lock().unwrap() = 0;
-        } else {
-            match self.get_mode() {
-                0x0 => self.hblank(),
-                0x1 => self.vblank(),
-                0x2 => self.oam_search(),
-                0x3 => self.drawing_tiles(),
-                _ => {}
-            }
+        let mode = self.get_mode();
+
+        match mode {
+            0x0 => self.hblank(),
+            0x1 => self.vblank(),
+            0x2 => self.oam_search(),
+            0x3 => self.drawing_tiles(),
+            _ => {}
         }
     }
 
@@ -400,6 +398,9 @@ impl PictureProcessingUnit {
                 self.tile_num += 1;
                 self.cycle_count += ADVANCE_CYCLES;
             } else {
+                if self.frame_num == 800 {
+                    let q = 0;
+                }
                 if self.current_sprite_drawing < self.sprite_num && self.obj_enable {
                     let obj_length = self.get_obj_size();
                     let vram = self.vram.lock().unwrap();
@@ -438,29 +439,33 @@ impl PictureProcessingUnit {
                         (palette >> 6) & 0b11,
                     ];
                     let x_end = sprite[OAM_X_INDEX];
-                    let x_start = cmp::max(0, x_end - 8);
-                    let mut index = TILE_WIDTH - (x_end - x_start) as usize;
-                    let obj_range = if x_flip {
-                        (x_start..x_end).rev().collect::<Vec<u8>>()
-                    } else {
-                        (x_start..x_end).collect::<Vec<u8>>()
-                    };
-                    for x in obj_range {
-                        let color_index = ((((most_sig_byte >> (TILE_WIDTH - index - 1)) & 1) << 1)
-                            + ((least_sig_byte >> (TILE_WIDTH - index - 1)) & 1))
-                            as usize;
-                        let draw_color = color_indexes[color_index] as u8;
-                        if (x_start < self.x_precendence[x as usize]) //no obj with priority 
-                            & (draw_color != 0)
-                        // not transparent
-                        {
-                            self.x_precendence[x as usize] = x_start;
-                            if !bg_over_obj || (self.frame[row][x as usize] == 0) {
-                                self.frame[row][x as usize] = draw_color;
+                    if x_end > 0 && x_end < 168 {
+                        let x_start = cmp::max(0, x_end - 8);
+                        let mut index = TILE_WIDTH - (x_end - x_start) as usize;
+                        let obj_range = if x_flip {
+                            (x_start..x_end).rev().collect::<Vec<u8>>()
+                        } else {
+                            (x_start..x_end).collect::<Vec<u8>>()
+                        };
+                        for x in obj_range {
+                            let color_index = ((((most_sig_byte >> (TILE_WIDTH - index - 1)) & 1)
+                                << 1)
+                                + ((least_sig_byte >> (TILE_WIDTH - index - 1)) & 1))
+                                as usize;
+                            let draw_color = color_indexes[color_index] as u8;
+                            if (x_start < self.x_precendence[x as usize]) //no obj with priority 
+                                & (draw_color != 0)
+                            // not transparent
+                            {
+                                self.x_precendence[x as usize] = x_start;
+                                if !bg_over_obj || (self.frame[row][x as usize] == 0) {
+                                    self.frame[row][x as usize] = draw_color;
+                                }
                             }
+                            index += 1;
                         }
-                        index += 1;
                     }
+
                     self.current_sprite_drawing += 1;
                     self.cycle_count += ADVANCE_CYCLES;
                 } else {
@@ -510,7 +515,12 @@ impl PictureProcessingUnit {
     }
 
     fn vblank(&mut self) {
+        if self.get_ppu_enable() == 0 {
+            self.frame = [[0; 160]; 144];
+        }
         if self.starting {
+            //println!("frame_num: {}", self.frame_num);
+            self.frame_num += 1;
             self.frame_send.send(self.frame).unwrap();
             self.starting = false;
             self.set_vblank_interrupt();
@@ -518,6 +528,9 @@ impl PictureProcessingUnit {
                 self.set_stat_interrupt();
             }
             self.current_window_row = 0;
+        }
+        if self.frame_num == 746 && *self.ly.lock().unwrap() == 145 {
+            let q = 0;
         }
         self.cycle_count += ADVANCE_CYCLES;
         if self.cycle_count == ROW_DOTS {

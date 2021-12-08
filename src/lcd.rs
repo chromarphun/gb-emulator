@@ -21,6 +21,9 @@ pub struct DisplayUnit {
     reciever: mpsc::Receiver<[[u8; 160]; 144]>,
     interrupt_flag: Arc<Mutex<u8>>,
     p1: Arc<Mutex<u8>>,
+    debug_var: u8,
+    directional_presses: Arc<Mutex<u8>>,
+    action_presses: Arc<Mutex<u8>>,
 }
 
 impl DisplayUnit {
@@ -28,11 +31,17 @@ impl DisplayUnit {
         reciever: mpsc::Receiver<[[u8; 160]; 144]>,
         interrupt_flag: Arc<Mutex<u8>>,
         p1: Arc<Mutex<u8>>,
+        directional_presses: Arc<Mutex<u8>>,
+        action_presses: Arc<Mutex<u8>>,
     ) -> DisplayUnit {
+        let debug_var = 0;
         DisplayUnit {
             reciever,
             interrupt_flag,
             p1,
+            debug_var,
+            directional_presses,
+            action_presses,
         }
     }
     pub fn run(&mut self) {
@@ -49,26 +58,48 @@ impl DisplayUnit {
             .unwrap();
         let mut event_pump = sdl_context.event_pump().unwrap();
         let mut canvas = window.into_canvas().build().unwrap();
+        let mut now = Instant::now();
+        let mut frame_num = 0;
         'running: loop {
-            let frame_option = self.reciever.recv();
+            let frame_option = self.reciever.try_recv();
+            let mut point_vec_0: Vec<Point> = Vec::new();
+            let mut point_vec_1: Vec<Point> = Vec::new();
+            let mut point_vec_2: Vec<Point> = Vec::new();
+            let mut point_vec_3: Vec<Point> = Vec::new();
             match frame_option {
                 Ok(frame) => {
                     for row in 0..WINDOW_HEIGHT {
                         for column in 0..WINDOW_WIDTH {
-                            let pixel_color = COLOR_MAP[frame[row][column] as usize];
-                            canvas.set_draw_color(pixel_color);
-                            canvas
-                                .draw_point(Point::new(column as i32, row as i32))
-                                .expect("Failed drawing");
+                            // let pixel_color = COLOR_MAP[frame[row][column] as usize];
+                            // canvas.set_draw_color(pixel_color);
+                            // canvas
+                            //     .draw_point(Point::new(column as i32, row as i32))
+                            //     .expect("Failed drawing");
+                            match frame[row][column] {
+                                0 => point_vec_0.push(Point::new(column as i32, row as i32)),
+                                1 => point_vec_1.push(Point::new(column as i32, row as i32)),
+                                2 => point_vec_2.push(Point::new(column as i32, row as i32)),
+                                3 => point_vec_3.push(Point::new(column as i32, row as i32)),
+                                _ => {}
+                            }
                         }
                     }
+                    canvas.set_draw_color(COLOR_MAP[0]);
+                    canvas.draw_points(&point_vec_0[..]);
+                    canvas.set_draw_color(COLOR_MAP[1]);
+                    canvas.draw_points(&point_vec_1[..]);
+                    canvas.set_draw_color(COLOR_MAP[2]);
+                    canvas.draw_points(&point_vec_2[..]);
+                    canvas.set_draw_color(COLOR_MAP[3]);
+                    canvas.draw_points(&point_vec_3[..]);
                     canvas.present();
                 }
                 _ => {}
             }
+            //spin_sleep::sleep(Duration::new(0, 10_000_000));
             let prev_p1 = *self.p1.lock().unwrap();
-            let mut directional_keys = 0xF;
-            let mut a_b_sel_start_keys = 0xF;
+            let mut new_directional_presses = 0xF;
+            let mut new_action_presses = 0xF;
             for event in event_pump.poll_iter() {
                 match event {
                     Event::Quit { .. }
@@ -76,70 +107,82 @@ impl DisplayUnit {
                         scancode: Some(Scancode::Escape),
                         ..
                     } => break 'running,
+
                     Event::KeyDown {
                         scancode: Some(Scancode::Z),
                         ..
                     } => {
-                        a_b_sel_start_keys &= 0b0111;
+                        println!("Z Press!");
+                        new_action_presses &= 0b1110
                     }
+
                     Event::KeyDown {
                         scancode: Some(Scancode::X),
                         ..
-                    } => a_b_sel_start_keys &= 0b1011,
-                    Event::KeyDown {
-                        scancode: Some(Scancode::A),
-                        ..
-                    } => a_b_sel_start_keys &= 0b1101,
+                    } => new_action_presses &= 0b1101,
+
                     Event::KeyDown {
                         scancode: Some(Scancode::S),
                         ..
-                    } => a_b_sel_start_keys &= 0b1110,
+                    } => new_action_presses &= 0b1011,
+
+                    Event::KeyDown {
+                        scancode: Some(Scancode::A),
+                        ..
+                    } => new_action_presses &= 0b0111,
+
                     Event::KeyDown {
                         scancode: Some(Scancode::Right),
                         ..
-                    } => directional_keys &= 0b0111,
+                    } => new_directional_presses &= 0b1110,
+
                     Event::KeyDown {
                         scancode: Some(Scancode::Left),
                         ..
-                    } => directional_keys &= 0b1011,
+                    } => new_directional_presses &= 0b1101,
+
                     Event::KeyDown {
                         scancode: Some(Scancode::Up),
                         ..
-                    } => directional_keys &= 0b1101,
+                    } => new_directional_presses &= 0b1011,
+
                     Event::KeyDown {
                         scancode: Some(Scancode::Down),
                         ..
-                    } => directional_keys &= 0b1110,
+                    } => new_directional_presses &= 0b0111,
                     _ => {}
                 }
             }
             //create context for mutex to drop
             {
                 let mut p1 = self.p1.lock().unwrap();
-
+                *self.directional_presses.lock().unwrap() = new_directional_presses;
+                *self.action_presses.lock().unwrap() = new_action_presses;
                 let p14 = (*p1 >> 4) & 1;
                 let p15 = (*p1 >> 5) & 1;
                 let mut new_bits = 0xF;
                 *p1 &= 0b110000;
+
                 if p14 == 0 {
-                    new_bits &= directional_keys;
+                    new_bits &= new_directional_presses;
                 }
                 if p15 == 0 {
-                    new_bits &= a_b_sel_start_keys;
+                    new_bits &= new_action_presses;
                 }
                 *p1 += new_bits;
-
                 if ((prev_p1 | *p1) - *p1) & 0xF != 0 {
-                    println!(
-                        "{}",
-                        format!(
-                            "sending joypad interrupt! new: {:#010b}, old:{:#010b}, also directional: {:#010b} and ab etc: {:#010b}, new_bits: {:#010b}",
-                            *p1, prev_p1, directional_keys, a_b_sel_start_keys, new_bits
-                        )
-                    );
                     *self.interrupt_flag.lock().unwrap() |= 1 << 4;
                 }
             }
+            // frame_num += 1;
+            // if frame_num == 60 {
+            //     println!(
+            //         "FPS: {}",
+            //         (frame_num as f64 / (now.elapsed().as_nanos() as f64)) * 1000000000.0
+            //     );
+            //     frame_num = 0;
+            //     now = Instant::now();
+            // }
         }
     }
 }

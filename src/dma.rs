@@ -10,7 +10,7 @@ pub struct DirectMemoryAccess {
     vram: Arc<Mutex<[u8; 8192]>>,
     oam: Arc<Mutex<[u8; 160]>>,
     rom: Arc<Mutex<Vec<u8>>>,
-    external_ram: Arc<Mutex<[u8; 131072]>>,
+    external_ram: Arc<Mutex<Vec<u8>>>,
     internal_ram: Arc<Mutex<[u8; 8192]>>,
     rom_bank: Arc<Mutex<usize>>,
     ram_bank: Arc<Mutex<usize>>,
@@ -26,7 +26,7 @@ impl DirectMemoryAccess {
         vram: Arc<Mutex<[u8; 8192]>>,
         oam: Arc<Mutex<[u8; 160]>>,
         rom: Arc<Mutex<Vec<u8>>>,
-        external_ram: Arc<Mutex<[u8; 131072]>>,
+        external_ram: Arc<Mutex<Vec<u8>>>,
         internal_ram: Arc<Mutex<[u8; 8192]>>,
         rom_bank: Arc<Mutex<usize>>,
         ram_bank: Arc<Mutex<usize>>,
@@ -52,9 +52,9 @@ impl DirectMemoryAccess {
         let mut dma_transfer = self.dma_transfer.lock().unwrap();
         if *dma_transfer {
             if self.starting {
-                println!("DMA TRANSFER");
                 let mut oam = self.oam.lock().unwrap();
                 let reg = *self.dma_register.lock().unwrap() as usize;
+                //println!("{}", format!("DMA TRANSFER {:X}", reg));
                 let start_address = reg << 8;
 
                 match reg >> 4 {
@@ -104,6 +104,7 @@ impl DirectMemoryAccess {
                 if self.cycle_count == DMA_DOTS {
                     self.cycle_count = 0;
                     *dma_transfer = false;
+                    self.starting = true;
                 }
             }
         }
