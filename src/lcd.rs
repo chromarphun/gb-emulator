@@ -17,6 +17,7 @@ const COLOR_MAP: [Color; 5] = [
     Color::RGB(255, 255, 255),
 ];
 
+enum RomType {}
 pub struct DisplayUnit {
     reciever: mpsc::Receiver<[[u8; 160]; 144]>,
     interrupt_flag: Arc<Mutex<u8>>,
@@ -100,6 +101,20 @@ impl DisplayUnit {
             let prev_p1 = *self.p1.lock().unwrap();
             let mut new_directional_presses = 0xF;
             let mut new_action_presses = 0xF;
+            let state = event_pump.keyboard_state();
+            for code in state.pressed_scancodes() {
+                match code {
+                    Scancode::Z => new_action_presses &= 0b1110,
+                    Scancode::X => new_action_presses &= 0b1101,
+                    Scancode::S => new_action_presses &= 0b1011,
+                    Scancode::A => new_action_presses &= 0b0111,
+                    Scancode::Right => new_directional_presses &= 0b1110,
+                    Scancode::Left => new_directional_presses &= 0b1101,
+                    Scancode::Up => new_directional_presses &= 0b1011,
+                    Scancode::Down => new_directional_presses &= 0b0111,
+                    _ => {}
+                }
+            }
             for event in event_pump.poll_iter() {
                 match event {
                     Event::Quit { .. }
@@ -107,49 +122,6 @@ impl DisplayUnit {
                         scancode: Some(Scancode::Escape),
                         ..
                     } => break 'running,
-
-                    Event::KeyDown {
-                        scancode: Some(Scancode::Z),
-                        ..
-                    } => {
-                        println!("Z Press!");
-                        new_action_presses &= 0b1110
-                    }
-
-                    Event::KeyDown {
-                        scancode: Some(Scancode::X),
-                        ..
-                    } => new_action_presses &= 0b1101,
-
-                    Event::KeyDown {
-                        scancode: Some(Scancode::S),
-                        ..
-                    } => new_action_presses &= 0b1011,
-
-                    Event::KeyDown {
-                        scancode: Some(Scancode::A),
-                        ..
-                    } => new_action_presses &= 0b0111,
-
-                    Event::KeyDown {
-                        scancode: Some(Scancode::Right),
-                        ..
-                    } => new_directional_presses &= 0b1110,
-
-                    Event::KeyDown {
-                        scancode: Some(Scancode::Left),
-                        ..
-                    } => new_directional_presses &= 0b1101,
-
-                    Event::KeyDown {
-                        scancode: Some(Scancode::Up),
-                        ..
-                    } => new_directional_presses &= 0b1011,
-
-                    Event::KeyDown {
-                        scancode: Some(Scancode::Down),
-                        ..
-                    } => new_directional_presses &= 0b0111,
                     _ => {}
                 }
             }
