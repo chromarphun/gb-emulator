@@ -1,3 +1,5 @@
+use crate::sound::{Channel1, Channel2, Channel3, Channel4};
+use sdl2::audio::{AudioCallback, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Scancode;
 use sdl2::pixels::Color;
@@ -17,7 +19,6 @@ const COLOR_MAP: [Color; 5] = [
     Color::RGB(255, 255, 255),
 ];
 
-enum RomType {}
 pub struct DisplayUnit {
     reciever: mpsc::Receiver<[[u8; 160]; 144]>,
     interrupt_flag: Arc<Mutex<u8>>,
@@ -45,9 +46,33 @@ impl DisplayUnit {
             action_presses,
         }
     }
-    pub fn run(&mut self) {
+    pub fn run(
+        &mut self,
+        nr10: Arc<Mutex<u8>>,
+        nr11: Arc<Mutex<u8>>,
+        nr12: Arc<Mutex<u8>>,
+        nr13: Arc<Mutex<u8>>,
+        nr14: Arc<Mutex<u8>>,
+        nr21: Arc<Mutex<u8>>,
+        nr22: Arc<Mutex<u8>>,
+        nr23: Arc<Mutex<u8>>,
+        nr24: Arc<Mutex<u8>>,
+        nr30: Arc<Mutex<u8>>,
+        nr31: Arc<Mutex<u8>>,
+        nr32: Arc<Mutex<u8>>,
+        nr33: Arc<Mutex<u8>>,
+        nr34: Arc<Mutex<u8>>,
+        wave_ram: Arc<Mutex<[u8; 32]>>,
+        nr41: Arc<Mutex<u8>>,
+        nr42: Arc<Mutex<u8>>,
+        nr43: Arc<Mutex<u8>>,
+        nr44: Arc<Mutex<u8>>,
+        nr50: Arc<Mutex<u8>>,
+        nr52: Arc<Mutex<u8>>,
+    ) {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
+        let audio_subsystem = sdl_context.audio().unwrap();
         let window = video_subsystem
             .window(
                 "Gameboy Emulator",
@@ -59,6 +84,92 @@ impl DisplayUnit {
             .unwrap();
         let mut event_pump = sdl_context.event_pump().unwrap();
         let mut canvas = window.into_canvas().build().unwrap();
+        let spec_256 = AudioSpecDesired {
+            freq: Some(256),
+            channels: Some(1), // mono
+            samples: None,     // default sample size
+        };
+        let spec_32000 = AudioSpecDesired {
+            freq: Some(32000),
+            channels: Some(1), // mono
+            samples: None,     // default sample size
+        };
+        let channel1_instance = audio_subsystem
+            .open_playback(None, &spec_256, |spec| {
+                // initialize the audio callback
+                Channel1 {
+                    sweep_reg: nr10,
+                    length_duty_reg: nr11,
+                    vol_envelope_reg: nr12,
+                    freq_low_reg: nr13,
+                    freq_high_reg: nr14,
+                    clock: 0,
+                    sweep_period: 0,
+                    volume_period: 0,
+                    frequency: 0,
+                    channel_enable: false,
+                    sweep_enable: false,
+                    volume: 0,
+                    phase: 0.0,
+                }
+            })
+            .unwrap();
+        let channel2_instance = audio_subsystem
+            .open_playback(None, &spec_256, |spec| {
+                // initialize the audio callback
+                Channel2 {
+                    length_duty_reg: nr21,
+                    vol_envelope_reg: nr22,
+                    freq_low_reg: nr23,
+                    freq_high_reg: nr24,
+                    clock: 0,
+                    volume_period: 0,
+                    frequency: 0,
+                    channel_enable: false,
+                    volume: 0,
+                    phase: 0.0,
+                }
+            })
+            .unwrap();
+        let channel3_instance = audio_subsystem
+            .open_playback(None, &spec_256, |spec| {
+                // initialize the audio callback
+                Channel3 {
+                    on_off_reg: nr30,
+                    length_reg: nr31,
+                    output_reg: nr32,
+                    freq_low_reg: nr33,
+                    freq_high_reg: nr34,
+                    frequency: 0,
+                    wave_ram: wave_ram,
+                    pointer: 0,
+                    channel_enable: false,
+                    phase: 0.0,
+                }
+            })
+            .unwrap();
+        let channel4_instance = audio_subsystem
+            .open_playback(None, &spec_256, |spec| {
+                // initialize the audio callback
+                Channel4 {
+                    length_duty_reg: nr41,
+                    vol_envelope_reg: nr42,
+                    poly_counter_reg: nr43,
+                    counter_consec_reg: nr44,
+                    clock: 0,
+                    volume_period: 0,
+                    channel_enable: false,
+                    volume: 0,
+                    phase: 0.0,
+                    lsfr_bits: 0,
+                    high: false,
+                }
+            })
+            .unwrap();
+        channel1_instance.resume();
+        channel2_instance.resume();
+        channel3_instance.resume();
+        channel4_instance.resume();
         let mut now = Instant::now();
         let mut frame_num = 0;
         'running: loop {

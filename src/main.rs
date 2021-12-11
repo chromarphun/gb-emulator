@@ -6,6 +6,7 @@ mod cpu;
 mod dma;
 mod lcd;
 mod ppu;
+mod sound;
 use std::time::{Duration, Instant};
 mod timing;
 
@@ -48,6 +49,32 @@ fn main() {
     let dma_register = Arc::new(Mutex::new(0u8));
     let directional_presses = Arc::new(Mutex::new(0xFu8));
     let action_presses = Arc::new(Mutex::new(0xFu8));
+    let nr10 = Arc::new(Mutex::new(0u8));
+    let nr11 = Arc::new(Mutex::new(0u8));
+    let nr12 = Arc::new(Mutex::new(0u8));
+    let nr13 = Arc::new(Mutex::new(0u8));
+    let nr14 = Arc::new(Mutex::new(0u8));
+
+    let nr21 = Arc::new(Mutex::new(0u8));
+    let nr22 = Arc::new(Mutex::new(0u8));
+    let nr23 = Arc::new(Mutex::new(0u8));
+    let nr24 = Arc::new(Mutex::new(0u8));
+
+    let nr30 = Arc::new(Mutex::new(0u8));
+    let nr31 = Arc::new(Mutex::new(0u8));
+    let nr32 = Arc::new(Mutex::new(0u8));
+    let nr33 = Arc::new(Mutex::new(0u8));
+    let nr34 = Arc::new(Mutex::new(0u8));
+
+    let wave_ram = Arc::new(Mutex::new([0; 32]));
+
+    let nr41 = Arc::new(Mutex::new(0u8));
+    let nr42 = Arc::new(Mutex::new(0u8));
+    let nr43 = Arc::new(Mutex::new(0u8));
+    let nr44 = Arc::new(Mutex::new(0u8));
+
+    let nr50 = Arc::new(Mutex::new(0u8));
+    let nr52 = Arc::new(Mutex::new(0u8));
 
     let (frame_send, frame_recv) = mpsc::channel::<[[u8; 160]; 144]>();
 
@@ -70,6 +97,33 @@ fn main() {
     let interrupt_flag_lcd = Arc::clone(&interrupt_flag);
     let directional_presses_lcd = Arc::clone(&directional_presses);
     let action_presses_lcd = Arc::clone(&action_presses);
+
+    let nr10_lcd = Arc::clone(&nr10);
+    let nr11_lcd = Arc::clone(&nr11);
+    let nr12_lcd = Arc::clone(&nr12);
+    let nr13_lcd = Arc::clone(&nr13);
+    let nr14_lcd = Arc::clone(&nr14);
+
+    let nr21_lcd = Arc::clone(&nr21);
+    let nr22_lcd = Arc::clone(&nr22);
+    let nr23_lcd = Arc::clone(&nr23);
+    let nr24_lcd = Arc::clone(&nr24);
+
+    let nr30_lcd = Arc::clone(&nr30);
+    let nr31_lcd = Arc::clone(&nr31);
+    let nr32_lcd = Arc::clone(&nr32);
+    let nr33_lcd = Arc::clone(&nr33);
+    let nr34_lcd = Arc::clone(&nr34);
+
+    let wave_ram_lcd = Arc::clone(&wave_ram);
+
+    let nr41_lcd = Arc::clone(&nr41);
+    let nr42_lcd = Arc::clone(&nr42);
+    let nr43_lcd = Arc::clone(&nr43);
+    let nr44_lcd = Arc::clone(&nr44);
+
+    let nr50_lcd = Arc::clone(&nr50);
+    let nr52_lcd = Arc::clone(&nr52);
 
     let div_timer = Arc::clone(&div);
     let tima_timer = Arc::clone(&tima);
@@ -118,6 +172,27 @@ fn main() {
         interrupt_flag,
         directional_presses,
         action_presses,
+        nr10,
+        nr11,
+        nr12,
+        nr13,
+        nr14,
+        nr21,
+        nr22,
+        nr23,
+        nr24,
+        nr30,
+        nr31,
+        nr32,
+        nr33,
+        nr34,
+        wave_ram,
+        nr41,
+        nr42,
+        nr43,
+        nr44,
+        nr50,
+        nr52,
     );
     let mut ppu_instance = ppu::PictureProcessingUnit::new(
         lcdc_ppu,
@@ -176,7 +251,29 @@ fn main() {
         }
         spin_sleep::sleep(Duration::new(0, PERIOD_NS).saturating_sub(now.elapsed()));
     });
-    lcd_instance.run();
+    lcd_instance.run(
+        nr10_lcd,
+        nr11_lcd,
+        nr12_lcd,
+        nr13_lcd,
+        nr14_lcd,
+        nr21_lcd,
+        nr22_lcd,
+        nr23_lcd,
+        nr24_lcd,
+        nr30_lcd,
+        nr31_lcd,
+        nr32_lcd,
+        nr33_lcd,
+        nr34_lcd,
+        wave_ram_lcd,
+        nr41_lcd,
+        nr42_lcd,
+        nr43_lcd,
+        nr44_lcd,
+        nr50_lcd,
+        nr52_lcd,
+    );
     // thread::spawn(move || cpu_instance.run(&args[1]));
     // thread::spawn(move || timer_instance.run());
     // thread::spawn(move || dma_instance.run());
