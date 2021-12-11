@@ -62,7 +62,7 @@ impl DisplayUnit {
         nr32: Arc<Mutex<u8>>,
         nr33: Arc<Mutex<u8>>,
         nr34: Arc<Mutex<u8>>,
-        wave_ram: Arc<Mutex<[u8; 32]>>,
+        wave_ram: Arc<Mutex<[u8; 16]>>,
         nr41: Arc<Mutex<u8>>,
         nr42: Arc<Mutex<u8>>,
         nr43: Arc<Mutex<u8>>,
@@ -95,7 +95,7 @@ impl DisplayUnit {
             samples: None,     // default sample size
         };
         let channel1_instance = audio_subsystem
-            .open_playback(None, &spec_256, |spec| {
+            .open_playback(None, &spec_32000, |spec| {
                 // initialize the audio callback
                 Channel1 {
                     sweep_reg: nr10,
@@ -115,7 +115,7 @@ impl DisplayUnit {
             })
             .unwrap();
         let channel2_instance = audio_subsystem
-            .open_playback(None, &spec_256, |spec| {
+            .open_playback(None, &spec_32000, |spec| {
                 // initialize the audio callback
                 Channel2 {
                     length_duty_reg: nr21,
@@ -132,7 +132,7 @@ impl DisplayUnit {
             })
             .unwrap();
         let channel3_instance = audio_subsystem
-            .open_playback(None, &spec_256, |spec| {
+            .open_playback(None, &spec_32000, |spec| {
                 // initialize the audio callback
                 Channel3 {
                     on_off_reg: nr30,
@@ -145,11 +145,13 @@ impl DisplayUnit {
                     pointer: 0,
                     channel_enable: false,
                     phase: 0.0,
+                    clock: 0,
+                    upper: true,
                 }
             })
             .unwrap();
         let channel4_instance = audio_subsystem
-            .open_playback(None, &spec_256, |spec| {
+            .open_playback(None, &spec_32000, |spec| {
                 // initialize the audio callback
                 Channel4 {
                     length_duty_reg: nr41,
@@ -166,10 +168,10 @@ impl DisplayUnit {
                 }
             })
             .unwrap();
-        channel1_instance.resume();
-        channel2_instance.resume();
+        //channel1_instance.resume();
+        //channel2_instance.resume();
         channel3_instance.resume();
-        channel4_instance.resume();
+        //channel4_instance.resume();
         let mut now = Instant::now();
         let mut frame_num = 0;
         'running: loop {

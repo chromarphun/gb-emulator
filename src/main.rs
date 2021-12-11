@@ -66,7 +66,7 @@ fn main() {
     let nr33 = Arc::new(Mutex::new(0u8));
     let nr34 = Arc::new(Mutex::new(0u8));
 
-    let wave_ram = Arc::new(Mutex::new([0; 32]));
+    let wave_ram = Arc::new(Mutex::new([0; 16]));
 
     let nr41 = Arc::new(Mutex::new(0u8));
     let nr42 = Arc::new(Mutex::new(0u8));

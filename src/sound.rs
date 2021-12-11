@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 
 const DUTY_CONVERSION: [f32; 4] = [0.125, 0.25, 0.5, 0.75];
 const VOLUME_SHIFT_CONVERSION: [u8; 4] = [4, 0, 1, 2];
-const CLOCK: u32 = 256;
 
 pub struct Channel1 {
     pub sweep_reg: Arc<Mutex<u8>>,
@@ -11,7 +10,7 @@ pub struct Channel1 {
     pub vol_envelope_reg: Arc<Mutex<u8>>,
     pub freq_low_reg: Arc<Mutex<u8>>,
     pub freq_high_reg: Arc<Mutex<u8>>,
-    pub clock: u8,
+    pub clock: u16,
     pub sweep_period: u8,
     pub volume_period: u8,
     pub frequency: u32,
@@ -35,6 +34,7 @@ impl AudioCallback for Channel1 {
             self.clock = 0;
             self.sweep_period = 0;
             self.volume_period = 0;
+            self.volume = *self.vol_envelope_reg.lock().unwrap() >> 4;
             let (sweep_shift, sweep_time) = {
                 let sweep_reg = *self.sweep_reg.lock().unwrap();
                 (sweep_reg & 0b11, sweep_reg >> 4)
@@ -49,55 +49,59 @@ impl AudioCallback for Channel1 {
         self.frequency = (((*self.freq_high_reg.lock().unwrap() & 0b111) as u32) << 8)
             + *self.freq_low_reg.lock().unwrap() as u32;
         let counter_consec = *self.freq_high_reg.lock().unwrap() >> 6 & 1;
-        //SWEEP MODULE
-        if self.sweep_enable && self.clock % 2 == 0 {
-            let (sweep_shift, sweep_inc, sweep_time) = {
-                let sweep_reg = *self.sweep_reg.lock().unwrap();
-                (sweep_reg & 0b11, (sweep_reg >> 3 & 1) == 0, sweep_reg >> 4)
-            };
-            if sweep_time != 0 && self.sweep_period >= (sweep_time - 1) && sweep_shift != 0 {
-                let old_frequency = self.frequency;
-                self.frequency = if sweep_inc {
-                    self.frequency + (self.frequency >> sweep_shift)
-                } else {
-                    self.frequency - (self.frequency >> sweep_shift)
-                };
-                self.sweep_period = 0;
-                if self.frequency >= 2048 {
-                    self.frequency = old_frequency;
-                    self.channel_enable = false;
-                } else {
-                    *self.freq_low_reg.lock().unwrap() = (self.frequency & 0xFF) as u8;
-                    *self.freq_high_reg.lock().unwrap() &= 0b11111000;
-                    *self.freq_high_reg.lock().unwrap() |= ((self.frequency >> 8) & 0b111) as u8;
-                }
-            } else {
-                self.sweep_period += 1;
-            }
-        }
-        //DUTY MODULE
-        let duty = DUTY_CONVERSION[(*self.length_duty_reg.lock().unwrap() >> 6) as usize];
         for x in out.iter_mut() {
+            //SWEEP MODULE
+            if self.sweep_enable && self.clock % 250 == 0 {
+                let (sweep_shift, sweep_inc, sweep_time) = {
+                    let sweep_reg = *self.sweep_reg.lock().unwrap();
+                    (sweep_reg & 0b11, (sweep_reg >> 3 & 1) == 0, sweep_reg >> 4)
+                };
+                if sweep_time != 0 && self.sweep_period >= (sweep_time - 1) && sweep_shift != 0 {
+                    let old_frequency = self.frequency;
+                    self.frequency = if sweep_inc {
+                        self.frequency + (self.frequency >> sweep_shift)
+                    } else {
+                        self.frequency - (self.frequency >> sweep_shift)
+                    };
+                    self.sweep_period = 0;
+                    if self.frequency >= 2048 {
+                        self.frequency = old_frequency;
+                        self.channel_enable = false;
+                    } else {
+                        *self.freq_low_reg.lock().unwrap() = (self.frequency & 0xFF) as u8;
+                        *self.freq_high_reg.lock().unwrap() &= 0b11111000;
+                        *self.freq_high_reg.lock().unwrap() |=
+                            ((self.frequency >> 8) & 0b111) as u8;
+                    }
+                } else {
+                    self.sweep_period += 1;
+                }
+            }
+            //DUTY MODULE
+            let duty = DUTY_CONVERSION[(*self.length_duty_reg.lock().unwrap() >> 6) as usize];
+            let volume_time = *self.vol_envelope_reg.lock().unwrap() & 0b111;
+            let vol_inc = ((*self.vol_envelope_reg.lock().unwrap() >> 3) & 1) == 1;
+
             //LENGTH MODULE
-            if counter_consec == 1 {
+            if counter_consec == 1 && self.clock % 125 == 0 {
                 if length == 0 {
                     self.channel_enable = false;
                 } else {
                     length -= 1;
                     *self.length_duty_reg.lock().unwrap() &= 0b00000;
-                    *self.length_duty_reg.lock().unwrap() |= (64 - length);
+                    *self.length_duty_reg.lock().unwrap() |= 64 - length;
                 }
             }
 
             //VOLUME ENVELOPE MODULE
-            if self.clock == 0 && self.volume != 0 && self.volume != 15 {
-                let volume_time = *self.vol_envelope_reg.lock().unwrap() & 0b111;
+            if self.clock % 500 == 0 {
                 if volume_time != 0 && self.volume_period >= (volume_time - 1) {
-                    let vol_inc = ((*self.vol_envelope_reg.lock().unwrap() >> 3) & 1) == 1;
-                    self.volume = if vol_inc {
+                    self.volume = if vol_inc && self.volume < 15 {
                         self.volume + 1
-                    } else {
+                    } else if self.volume > 0 {
                         self.volume - 1
+                    } else {
+                        self.volume
                     };
                     self.volume_period = 0;
                 } else {
@@ -110,11 +114,13 @@ impl AudioCallback for Channel1 {
             } else if self.phase <= (1.0 - duty) {
                 self.volume as f32 / 100.0
             } else {
-                -(self.volume as f32 / 100.0)
+                //-(self.volume as f32 / 100.0)
+                0.0
             };
-            let phase_add = (65536 / (2048 - self.frequency)) / CLOCK;
+            let phase_add = (131072.0 / (2048 - self.frequency) as f32) / 32000.0;
+            //let phase_add = 440.0 / 32000.0;
             self.phase = (self.phase + phase_add as f32) % 1.0;
-            self.clock = (self.clock + 1) % 8;
+            self.clock = (self.clock + 1) % 32000;
         }
     }
 }
@@ -124,7 +130,7 @@ pub struct Channel2 {
     pub vol_envelope_reg: Arc<Mutex<u8>>,
     pub freq_low_reg: Arc<Mutex<u8>>,
     pub freq_high_reg: Arc<Mutex<u8>>,
-    pub clock: u8,
+    pub clock: u16,
     pub volume_period: u8,
     pub frequency: u32,
     pub channel_enable: bool,
@@ -145,35 +151,39 @@ impl AudioCallback for Channel2 {
             self.channel_enable = true;
             self.clock = 0;
             self.volume_period = 0;
+            self.volume = *self.vol_envelope_reg.lock().unwrap() >> 4;
+
             *self.freq_high_reg.lock().unwrap() &= 0b01111111;
         }
         self.frequency = (((*self.freq_high_reg.lock().unwrap() & 0b111) as u32) << 8)
             + *self.freq_low_reg.lock().unwrap() as u32;
         let counter_consec = *self.freq_high_reg.lock().unwrap() >> 6 & 1;
-
+        //SWEEP MODULE
         //DUTY MODULE
         let duty = DUTY_CONVERSION[(*self.length_duty_reg.lock().unwrap() >> 6) as usize];
+        let volume_time = *self.vol_envelope_reg.lock().unwrap() & 0b111;
+        let vol_inc = ((*self.vol_envelope_reg.lock().unwrap() >> 3) & 1) == 1;
         for x in out.iter_mut() {
             //LENGTH MODULE
-            if counter_consec == 1 {
+            if counter_consec == 1 && self.clock % 125 == 0 {
                 if length == 0 {
                     self.channel_enable = false;
                 } else {
                     length -= 1;
                     *self.length_duty_reg.lock().unwrap() &= 0b00000;
-                    *self.length_duty_reg.lock().unwrap() |= (64 - length);
+                    *self.length_duty_reg.lock().unwrap() |= 64 - length;
                 }
             }
 
             //VOLUME ENVELOPE MODULE
-            if self.clock == 0 && self.volume != 0 && self.volume != 15 {
-                let volume_time = *self.vol_envelope_reg.lock().unwrap() & 0b111;
+            if self.clock % 500 == 0 {
                 if volume_time != 0 && self.volume_period >= (volume_time - 1) {
-                    let vol_inc = ((*self.vol_envelope_reg.lock().unwrap() >> 3) & 1) == 1;
-                    self.volume = if vol_inc {
+                    self.volume = if vol_inc && self.volume < 15 {
                         self.volume + 1
-                    } else {
+                    } else if self.volume > 0 {
                         self.volume - 1
+                    } else {
+                        self.volume
                     };
                     self.volume_period = 0;
                 } else {
@@ -186,11 +196,13 @@ impl AudioCallback for Channel2 {
             } else if self.phase <= (1.0 - duty) {
                 self.volume as f32 / 100.0
             } else {
-                -(self.volume as f32 / 100.0)
+                //-(self.volume as f32 / 100.0)
+                0.0
             };
-            let phase_add = (65536 / (2048 - self.frequency)) / CLOCK;
+            let phase_add = (131072.0 / (2048 - self.frequency) as f32) / 32000.0;
+            //let phase_add = 440.0 / 32000.0;
             self.phase = (self.phase + phase_add as f32) % 1.0;
-            self.clock = (self.clock + 1) % 8;
+            self.clock = (self.clock + 1) % 32000;
         }
     }
 }
@@ -202,10 +214,12 @@ pub struct Channel3 {
     pub freq_low_reg: Arc<Mutex<u8>>,
     pub freq_high_reg: Arc<Mutex<u8>>,
     pub frequency: u32,
-    pub wave_ram: Arc<Mutex<[u8; 32]>>,
+    pub wave_ram: Arc<Mutex<[u8; 16]>>,
     pub pointer: usize,
     pub channel_enable: bool,
     pub phase: f32,
+    pub clock: u16,
+    pub upper: bool,
 }
 
 impl AudioCallback for Channel3 {
@@ -213,42 +227,54 @@ impl AudioCallback for Channel3 {
 
     fn callback(&mut self, out: &mut [f32]) {
         let initialize = (*self.freq_high_reg.lock().unwrap() >> 7) == 1;
-        let mut length = 64 - (*self.length_reg.lock().unwrap() & 0b11111) as u16;
+        let mut length = 256 - (*self.length_reg.lock().unwrap() & 0b11111) as u16;
         if initialize {
             if length == 0 {
                 length = 256;
             }
             self.pointer = 0;
             *self.freq_high_reg.lock().unwrap() &= 0b01111111;
+            self.channel_enable = true;
         }
-        self.frequency = (((*self.freq_high_reg.lock().unwrap() & 0b111) as u32) << 8)
-            + *self.freq_low_reg.lock().unwrap() as u32;
+
         let counter_consec = *self.freq_high_reg.lock().unwrap() >> 6 & 1;
-        let volume_shift =
-            VOLUME_SHIFT_CONVERSION[((*self.output_reg.lock().unwrap() >> 5) & 0b11) as usize];
+
         //LENGTH MODULE
         for x in out.iter_mut() {
-            if counter_consec == 1 {
+            self.frequency = (((*self.freq_high_reg.lock().unwrap() & 0b111) as u32) << 8)
+                + *self.freq_low_reg.lock().unwrap() as u32;
+            let volume_shift =
+                VOLUME_SHIFT_CONVERSION[((*self.output_reg.lock().unwrap() >> 5) & 0b11) as usize];
+            if counter_consec == 1 && self.clock % 125 == 0 {
                 if length == 0 {
                     self.channel_enable = false;
                 } else {
                     length -= 1;
                     *self.length_reg.lock().unwrap() &= 0b00000;
-                    *self.length_reg.lock().unwrap() |= (64 - length) as u8;
+                    *self.length_reg.lock().unwrap() |= (256 - length) as u8;
                 }
             }
-
             *x = if self.channel_enable && (*self.on_off_reg.lock().unwrap() >> 7) == 1 {
-                (self.wave_ram.lock().unwrap()[self.pointer] >> volume_shift) as f32 - 8.0
+                if self.upper {
+                    ((self.wave_ram.lock().unwrap()[self.pointer] >> 4) >> volume_shift) as f32
+                        / 100.0
+                } else {
+                    ((self.wave_ram.lock().unwrap()[self.pointer] & 0xF) >> volume_shift) as f32
+                        / 100.0
+                }
             } else {
                 0.0
             };
-            let phase_add = (65536 / (2048 - self.frequency)) / CLOCK;
+            let phase_add = (65536.0 / (2048.0 - self.frequency as f32)) / 32000.0;
             let old_phase = self.phase;
             self.phase = (self.phase as f32 + phase_add as f32) % 1.0;
             if self.phase < old_phase {
-                self.pointer = (self.pointer + 1) % 32;
+                if !self.upper {
+                    self.pointer = (self.pointer + 1) % 16;
+                }
+                self.upper = !self.upper;
             }
+            self.clock = (self.clock + 1) % 32000;
         }
     }
 }
@@ -285,13 +311,14 @@ impl AudioCallback for Channel4 {
 
     fn callback(&mut self, out: &mut [f32]) {
         let initialize = (*self.counter_consec_reg.lock().unwrap() >> 7) == 1;
-        let mut length = 64 - (*self.length_duty_reg.lock().unwrap() & 0b11111) as u16;
+        let mut length = 64 - (*self.length_duty_reg.lock().unwrap() & 0b11111);
         if initialize {
             if length == 0 {
                 length = 64;
             }
             *self.counter_consec_reg.lock().unwrap() &= 0b01111111;
             self.lsfr_bits = 0x7FFF;
+            self.channel_enable = true;
         }
         let (frequency, width) = {
             let poly_counter_reg = *self.poly_counter_reg.lock().unwrap();
@@ -309,27 +336,29 @@ impl AudioCallback for Channel4 {
             (524288.0 / freq_divider as f32, width)
         };
         let counter_consec = *self.counter_consec_reg.lock().unwrap() >> 6 & 1;
+        let volume_time = *self.vol_envelope_reg.lock().unwrap() & 0b111;
+        let vol_inc = ((*self.vol_envelope_reg.lock().unwrap() >> 3) & 1) == 1;
         for x in out.iter_mut() {
             //LENGTH MODULE
 
-            if counter_consec == 1 {
+            if counter_consec == 1 && self.clock % 125 == 0 {
                 if length == 0 {
                     self.channel_enable = false;
                 } else {
                     length -= 1;
                     *self.length_duty_reg.lock().unwrap() &= 0b00000;
-                    *self.length_duty_reg.lock().unwrap() |= (64 - length) as u8;
+                    *self.length_duty_reg.lock().unwrap() |= 64 - length;
                 }
             }
 
-            if self.clock == 0 && self.volume != 0 && self.volume != 15 {
-                let volume_time = *self.vol_envelope_reg.lock().unwrap() & 0b111;
+            if self.clock % 500 == 0 {
                 if volume_time != 0 && self.volume_period >= (volume_time - 1) {
-                    let vol_inc = ((*self.vol_envelope_reg.lock().unwrap() >> 3) & 1) == 1;
-                    self.volume = if vol_inc {
+                    self.volume = if vol_inc && self.volume < 15 {
                         self.volume + 1
-                    } else {
+                    } else if self.volume > 0 {
                         self.volume - 1
+                    } else {
+                        self.volume
                     };
                     self.volume_period = 0;
                 } else {
@@ -345,13 +374,13 @@ impl AudioCallback for Channel4 {
                 -(self.volume as f32) / 100.0
             };
             let old_phase = self.phase;
-            self.phase += frequency / 44100.0;
+            self.phase += frequency / 32000.0;
             if old_phase > self.phase {
                 let (new_lfsr_bits, new_high) = noise_lsfr(self.lsfr_bits, width);
                 self.lsfr_bits = new_lfsr_bits;
                 self.high = new_high;
             }
-            self.clock = (self.clock + 1) % 500;
+            self.clock = (self.clock + 1) % 32000;
         }
     }
 }

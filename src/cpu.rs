@@ -421,7 +421,7 @@ pub struct CentralProcessingUnit {
     nr32: Arc<Mutex<u8>>,
     nr33: Arc<Mutex<u8>>,
     nr34: Arc<Mutex<u8>>,
-    wave_ram: Arc<Mutex<[u8; 32]>>,
+    wave_ram: Arc<Mutex<[u8; 16]>>,
     nr41: Arc<Mutex<u8>>,
     nr42: Arc<Mutex<u8>>,
     nr43: Arc<Mutex<u8>>,
@@ -476,7 +476,7 @@ impl CentralProcessingUnit {
         nr32: Arc<Mutex<u8>>,
         nr33: Arc<Mutex<u8>>,
         nr34: Arc<Mutex<u8>>,
-        wave_ram: Arc<Mutex<[u8; 32]>>,
+        wave_ram: Arc<Mutex<[u8; 16]>>,
         nr41: Arc<Mutex<u8>>,
         nr42: Arc<Mutex<u8>>,
         nr43: Arc<Mutex<u8>>,
@@ -504,7 +504,6 @@ impl CentralProcessingUnit {
         let holding_ff01 = 0;
         let holding_ff02 = 0;
         let halting = false;
-        let now = Instant::now();
         let repeat = false;
         let old_pc: u16 = 0;
         let log =
