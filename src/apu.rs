@@ -14,22 +14,24 @@ struct AudioChannels {
     channel_1_enable: Arc<Mutex<bool>>,
     channel_1_volume: Arc<Mutex<u8>>,
     silence_val: u8,
+    capacitor: f32,
 }
 
 impl AudioCallback for AudioChannels {
-    type Channel = u8;
-    fn callback(&mut self, out: &mut [u8]) {
+    type Channel = f32;
+    fn callback(&mut self, out: &mut [f32]) {
         let frequency = *self.channel_1_frequency.lock().unwrap();
 
         for x in out.iter_mut() {
             let vol = *self.channel_1_volume.lock().unwrap();
             if !*self.channel_1_enable.lock().unwrap() {
-                *x = self.silence_val;
+                *x = 0.0 - self.capacitor;
             } else if self.channel_1_phase < 0.5 {
-                *x = self.silence_val - vol;
+                *x = -(vol as f32) / 100.0 - self.capacitor;
             } else {
-                *x = self.silence_val + vol;
+                *x = (vol as f32) / 100.0 - self.capacitor;
             }
+            self.capacitor = (vol as f32 / 100.0) - ((vol as f32) / 100.0 - self.capacitor) * 0.996;
             self.channel_1_phase =
                 (self.channel_1_phase + (131072.0 / (2048.0 - frequency as f32)) / 44100.0) % 1.0;
             // if self.channel_1_phase < 0.5 {
@@ -87,8 +89,8 @@ impl AudioProcessingUnit {
         let channel_1_enable_cb = Arc::clone(&channel_1_enable);
         let desired_spec = AudioSpecDesired {
             freq: Some(44100),
-            channels: Some(1), // mono
-            samples: Some(16), // default sample size
+            channels: Some(1),  // mono
+            samples: Some(256), // default sample size
         };
         let channel_device = audio_subsystem
             .open_playback(None, &desired_spec, |spec| {
@@ -99,6 +101,7 @@ impl AudioProcessingUnit {
                     channel_1_enable: channel_1_enable_cb,
                     channel_1_volume: channel_1_volume_cb,
                     silence_val: spec.silence,
+                    capacitor: 0.0,
                 }
             })
             .unwrap();
