@@ -16,7 +16,7 @@ mod timing;
 const PERIOD_MS: u32 = 5;
 //const PERIOD_NS: u32 = (PERIOD_MS * 1_000_000) as u32;
 //const PERIODS_PER_SECOND: u32 = 1000 / PERIOD_MS;
-const PERIODS_PER_SECOND: u32 = 256;
+const PERIODS_PER_SECOND: u32 = 64;
 const PERIOD_NS: u32 = 1_000_000_000 / PERIODS_PER_SECOND;
 const CYCLES_PER_SECOND: u32 = 4_194_304;
 const CYCLES_PER_PERIOD: u32 = CYCLES_PER_SECOND / PERIODS_PER_SECOND;
@@ -283,7 +283,7 @@ fn main() {
         apu::AudioProcessingUnit::new(queue, nr10_apu, nr11_apu, nr12_apu, nr13_apu, nr14_apu);
 
     cpu_instance.load_rom(&args[1]);
-
+    println!("advance:{}", ADVANCES_PER_PERIOD);
     let period_time = Duration::new(0, PERIOD_NS);
     while *running.lock().unwrap() {
         let now = Instant::now();
@@ -296,7 +296,9 @@ fn main() {
             epu_instance.advance();
             apu_instance.advance();
         }
-        apu_instance.send();
+        //println!("elapsed :{}", now.elapsed().as_micros());
+        //apu_instance.send();
+        //while now.elapsed() < period_time {}
         spin_sleep::sleep(Duration::new(0, PERIOD_NS).saturating_sub(now.elapsed()));
     }
 
