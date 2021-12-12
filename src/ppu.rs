@@ -44,7 +44,7 @@ pub struct PictureProcessingUnit {
     obp0: Arc<Mutex<u8>>,
     obp1: Arc<Mutex<u8>>,
     interrupt_flag: Arc<Mutex<u8>>,
-    frame_send: mpsc::Sender<[[u8; 160]; 144]>,
+    frame_send: Arc<Mutex<[[u8; 160]; 144]>>,
     cycle_count: u32,
     possible_sprites: Vec<[u8; 4]>,
     starting: bool,
@@ -89,7 +89,7 @@ impl PictureProcessingUnit {
         obp0: Arc<Mutex<u8>>,
         obp1: Arc<Mutex<u8>>,
         interrupt_flag: Arc<Mutex<u8>>,
-        frame_send: mpsc::Sender<[[u8; 160]; 144]>,
+        frame_send: Arc<Mutex<[[u8; 160]; 144]>>,
     ) -> PictureProcessingUnit {
         let cycle_count = 0;
         let possible_sprites: Vec<[u8; 4]> = Vec::new();
@@ -521,7 +521,7 @@ impl PictureProcessingUnit {
         if self.starting {
             //println!("frame_num: {}", self.frame_num);
             self.frame_num += 1;
-            self.frame_send.send(self.frame).unwrap();
+            *self.frame_send.lock().unwrap() = self.frame;
             self.starting = false;
             self.set_vblank_interrupt();
             if self.get_stat_vblank_int_flag() == 1 {

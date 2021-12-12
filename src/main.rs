@@ -1,13 +1,16 @@
+use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use std::env;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+mod apu;
 mod cpu;
 mod dma;
-mod lcd;
+mod epu;
 mod ppu;
 mod sound;
 use std::time::{Duration, Instant};
+mod pdu;
 mod timing;
 
 const PERIOD_MS: u32 = 5;
@@ -17,6 +20,8 @@ const CYCLES_PER_SECOND: u32 = 4_194_304;
 const CYCLES_PER_PERIOD: u32 = CYCLES_PER_SECOND / PERIODS_PER_SECOND;
 const ADVANCE_CYCLES: u32 = 4;
 const ADVANCES_PER_PERIOD: u32 = CYCLES_PER_PERIOD / ADVANCE_CYCLES;
+const WINDOW_WIDTH: usize = 160;
+const WINDOW_HEIGHT: usize = 144;
 
 fn main() {
     let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
@@ -76,7 +81,7 @@ fn main() {
     let nr50 = Arc::new(Mutex::new(0u8));
     let nr52 = Arc::new(Mutex::new(0u8));
 
-    let (frame_send, frame_recv) = mpsc::channel::<[[u8; 160]; 144]>();
+    let frame_send = Arc::new(Mutex::new([[0; 160]; 144]));
 
     let lcdc_ppu = Arc::clone(&lcdc);
     let stat_ppu = Arc::clone(&stat);
@@ -93,16 +98,19 @@ fn main() {
     let obp1_ppu = Arc::clone(&obp1);
     let interrupt_flag_ppu = Arc::clone(&interrupt_flag);
 
-    let p1_lcd = Arc::clone(&p1);
-    let interrupt_flag_lcd = Arc::clone(&interrupt_flag);
-    let directional_presses_lcd = Arc::clone(&directional_presses);
-    let action_presses_lcd = Arc::clone(&action_presses);
+    let p1_epu = Arc::clone(&p1);
+    let interrupt_flag_epu = Arc::clone(&interrupt_flag);
+    let directional_presses_epu = Arc::clone(&directional_presses);
+    let action_presses_epu = Arc::clone(&action_presses);
 
-    let nr10_lcd = Arc::clone(&nr10);
-    let nr11_lcd = Arc::clone(&nr11);
-    let nr12_lcd = Arc::clone(&nr12);
-    let nr13_lcd = Arc::clone(&nr13);
-    let nr14_lcd = Arc::clone(&nr14);
+    let stat_pdu = Arc::clone(&stat);
+    let frame_send_pdu = Arc::clone(&frame_send);
+
+    let nr10_apu = Arc::clone(&nr10);
+    let nr11_apu = Arc::clone(&nr11);
+    let nr12_apu = Arc::clone(&nr12);
+    let nr13_apu = Arc::clone(&nr13);
+    let nr14_apu = Arc::clone(&nr14);
 
     let nr21_lcd = Arc::clone(&nr21);
     let nr22_lcd = Arc::clone(&nr22);
@@ -232,48 +240,65 @@ fn main() {
         ram_bank_dma,
     );
     let args: Vec<String> = env::args().collect();
-    let mut lcd_instance = lcd::DisplayUnit::new(
-        frame_recv,
-        interrupt_flag_lcd,
-        p1_lcd,
-        directional_presses_lcd,
-        action_presses_lcd,
+
+    let sdl_context = sdl2::init().unwrap();
+    let video_subsystem = sdl_context.video().unwrap();
+    let audio_subsystem = sdl_context.audio().unwrap();
+    let window = video_subsystem
+        .window(
+            "Gameboy Emulator",
+            WINDOW_WIDTH as u32,
+            WINDOW_HEIGHT as u32,
+        )
+        .position_centered()
+        .build()
+        .unwrap();
+    let mut event_pump = sdl_context.event_pump().unwrap();
+    let mut canvas = window.into_canvas().build().unwrap();
+
+    let mut pdu_instance = pdu::PictureDisplayUnit::new(canvas, stat_pdu, frame_send_pdu);
+
+    let mut running = Arc::new(Mutex::new(true));
+    let mut running_epu = Arc::clone(&running);
+
+    let mut epu_instance = epu::EventProcessingUnit::new(
+        p1_epu,
+        directional_presses_epu,
+        action_presses_epu,
+        interrupt_flag_epu,
+        running_epu,
+        event_pump,
     );
+
+    let desired_spec = AudioSpecDesired {
+        freq: Some(65536),
+        channels: Some(1), // mono
+        samples: None,     // default sample size
+    };
+    let queue: AudioQueue<f32> = audio_subsystem.open_queue(None, &desired_spec).unwrap();
+
+    let mut apu_instance =
+        apu::AudioProcessingUnit::new(queue, nr10_apu, nr11_apu, nr12_apu, nr13_apu, nr14_apu);
+
     cpu_instance.load_rom(&args[1]);
 
-    thread::spawn(move || loop {
+    let period_time = Duration::new(0, PERIOD_NS);
+
+    while *running.lock().unwrap() {
         let now = Instant::now();
         for _ in 0..ADVANCES_PER_PERIOD {
             cpu_instance.advance();
             ppu_instance.advance();
             timer_instance.advance();
             dma_instance.advance();
+            pdu_instance.advance();
+            epu_instance.advance();
+            apu_instance.advance();
         }
         spin_sleep::sleep(Duration::new(0, PERIOD_NS).saturating_sub(now.elapsed()));
-    });
-    lcd_instance.run(
-        nr10_lcd,
-        nr11_lcd,
-        nr12_lcd,
-        nr13_lcd,
-        nr14_lcd,
-        nr21_lcd,
-        nr22_lcd,
-        nr23_lcd,
-        nr24_lcd,
-        nr30_lcd,
-        nr31_lcd,
-        nr32_lcd,
-        nr33_lcd,
-        nr34_lcd,
-        wave_ram_lcd,
-        nr41_lcd,
-        nr42_lcd,
-        nr43_lcd,
-        nr44_lcd,
-        nr50_lcd,
-        nr52_lcd,
-    );
+    }
+
+    //lcd_instance.run();
     // thread::spawn(move || cpu_instance.run(&args[1]));
     // thread::spawn(move || timer_instance.run());
     // thread::spawn(move || dma_instance.run());
