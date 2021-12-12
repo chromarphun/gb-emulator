@@ -114,10 +114,10 @@ fn main() {
     let nr13_apu = Arc::clone(&nr13);
     let nr14_apu = Arc::clone(&nr14);
 
-    let nr21_lcd = Arc::clone(&nr21);
-    let nr22_lcd = Arc::clone(&nr22);
-    let nr23_lcd = Arc::clone(&nr23);
-    let nr24_lcd = Arc::clone(&nr24);
+    let nr21_apu = Arc::clone(&nr21);
+    let nr22_apu = Arc::clone(&nr22);
+    let nr23_apu = Arc::clone(&nr23);
+    let nr24_apu = Arc::clone(&nr24);
 
     let nr30_lcd = Arc::clone(&nr30);
     let nr31_lcd = Arc::clone(&nr31);
@@ -272,18 +272,20 @@ fn main() {
         event_pump,
     );
 
-    let desired_spec = AudioSpecDesired {
-        freq: Some(65536),
-        channels: Some(1), // mono
-        samples: None,     // default sample size
-    };
-    let queue: AudioQueue<f32> = audio_subsystem.open_queue(None, &desired_spec).unwrap();
-
-    let mut apu_instance =
-        apu::AudioProcessingUnit::new(queue, nr10_apu, nr11_apu, nr12_apu, nr13_apu, nr14_apu);
+    let mut apu_instance = apu::AudioProcessingUnit::new(
+        audio_subsystem,
+        nr10_apu,
+        nr11_apu,
+        nr12_apu,
+        nr13_apu,
+        nr14_apu,
+        nr21_apu,
+        nr22_apu,
+        nr23_apu,
+        nr24_apu,
+    );
 
     cpu_instance.load_rom(&args[1]);
-    println!("advance:{}", ADVANCES_PER_PERIOD);
     let period_time = Duration::new(0, PERIOD_NS);
     while *running.lock().unwrap() {
         let now = Instant::now();
