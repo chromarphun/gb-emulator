@@ -109,4 +109,53 @@ impl EventProcessingUnit {
             }
         }
     }
+    pub fn total_advance(&mut self) {
+        self.new_directional_presses = 0xF;
+        self.new_action_presses = 0xF;
+        let state = self.event_pump.keyboard_state();
+        for code in state.pressed_scancodes() {
+            match code {
+                Scancode::Z => self.new_action_presses &= 0b1110,
+                Scancode::X => self.new_action_presses &= 0b1101,
+                Scancode::S => self.new_action_presses &= 0b1011,
+                Scancode::A => self.new_action_presses &= 0b0111,
+                Scancode::Right => self.new_directional_presses &= 0b1110,
+                Scancode::Left => self.new_directional_presses &= 0b1101,
+                Scancode::Up => self.new_directional_presses &= 0b1011,
+                Scancode::Down => self.new_directional_presses &= 0b0111,
+                _ => {}
+            }
+        }
+        *self.directional_presses.lock().unwrap() = self.new_directional_presses;
+        *self.action_presses.lock().unwrap() = self.new_action_presses;
+        let mut p1 = self.p1.lock().unwrap();
+        let prev_p1 = *p1;
+        *self.directional_presses.lock().unwrap() = self.new_directional_presses;
+        *self.action_presses.lock().unwrap() = self.new_action_presses;
+        let p14 = (*p1 >> 4) & 1;
+        let p15 = (*p1 >> 5) & 1;
+        let mut new_bits = 0xF;
+        *p1 &= 0b110000;
+
+        if p14 == 0 {
+            new_bits &= self.new_directional_presses;
+        }
+        if p15 == 0 {
+            new_bits &= self.new_action_presses;
+        }
+        *p1 += new_bits;
+        if ((prev_p1 | *p1) - *p1) & 0xF != 0 {
+            *self.interrupt_flag.lock().unwrap() |= 1 << 4;
+        }
+        for event in self.event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    scancode: Some(Scancode::Escape),
+                    ..
+                } => *self.running.lock().unwrap() = false,
+                _ => {}
+            }
+        }
+    }
 }

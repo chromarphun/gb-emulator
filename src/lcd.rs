@@ -26,6 +26,11 @@ pub struct DisplayUnit {
     debug_var: u8,
     directional_presses: Arc<Mutex<u8>>,
     action_presses: Arc<Mutex<u8>>,
+    canvas: Canvas<Window>,
+    point_vec_0: Vec<Point>,
+    point_vec_1: Vec<Point>,
+    point_vec_2: Vec<Point>,
+    point_vec_3: Vec<Point>,
 }
 
 impl DisplayUnit {
@@ -44,8 +49,15 @@ impl DisplayUnit {
             debug_var,
             directional_presses,
             action_presses,
+            canvas,
+            point_vec_0,
+            point_vec_1,
+            point_vec_2,
+            point_vec_3,
+            event_pump,
         }
     }
+    pub fn advance(&mut self) {}
     pub fn run(&mut self) {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();

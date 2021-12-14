@@ -24,6 +24,8 @@ const ADVANCE_CYCLES: u32 = 4;
 const ADVANCES_PER_PERIOD: u32 = CYCLES_PER_PERIOD / ADVANCE_CYCLES;
 const WINDOW_WIDTH: usize = 160;
 const WINDOW_HEIGHT: usize = 144;
+const SAMPLES_PER_SECOND: u32 = 44100;
+const CYCLES_PER_SAMPLE: u32 = CYCLES_PER_SECOND / SAMPLES_PER_SECOND;
 
 fn main() {
     let rom = Arc::new(Mutex::new(Vec::<u8>::new()));
@@ -119,18 +121,18 @@ fn main() {
     let nr23_apu = Arc::clone(&nr23);
     let nr24_apu = Arc::clone(&nr24);
 
-    let nr30_lcd = Arc::clone(&nr30);
-    let nr31_lcd = Arc::clone(&nr31);
-    let nr32_lcd = Arc::clone(&nr32);
-    let nr33_lcd = Arc::clone(&nr33);
-    let nr34_lcd = Arc::clone(&nr34);
+    let nr30_apu = Arc::clone(&nr30);
+    let nr31_apu = Arc::clone(&nr31);
+    let nr32_apu = Arc::clone(&nr32);
+    let nr33_apu = Arc::clone(&nr33);
+    let nr34_apu = Arc::clone(&nr34);
 
-    let wave_ram_lcd = Arc::clone(&wave_ram);
+    let wave_ram_apu = Arc::clone(&wave_ram);
 
-    let nr41_lcd = Arc::clone(&nr41);
-    let nr42_lcd = Arc::clone(&nr42);
-    let nr43_lcd = Arc::clone(&nr43);
-    let nr44_lcd = Arc::clone(&nr44);
+    let nr41_apu = Arc::clone(&nr41);
+    let nr42_apu = Arc::clone(&nr42);
+    let nr43_apu = Arc::clone(&nr43);
+    let nr44_apu = Arc::clone(&nr44);
 
     let nr50_lcd = Arc::clone(&nr50);
     let nr52_lcd = Arc::clone(&nr52);
@@ -283,6 +285,16 @@ fn main() {
         nr22_apu,
         nr23_apu,
         nr24_apu,
+        nr30_apu,
+        nr31_apu,
+        nr32_apu,
+        nr33_apu,
+        nr34_apu,
+        wave_ram_apu,
+        nr41_apu,
+        nr42_apu,
+        nr43_apu,
+        nr44_apu,
     );
 
     cpu_instance.load_rom(&args[1]);
@@ -295,11 +307,9 @@ fn main() {
             timer_instance.advance();
             dma_instance.advance();
             pdu_instance.advance();
-            epu_instance.advance();
             apu_instance.advance();
         }
-        //println!("elapsed :{}", now.elapsed().as_micros());
-        //apu_instance.send();
+        epu_instance.total_advance();
         //while now.elapsed() < period_time {}
         spin_sleep::sleep(Duration::new(0, PERIOD_NS).saturating_sub(now.elapsed()));
     }
