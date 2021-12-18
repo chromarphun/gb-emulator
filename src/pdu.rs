@@ -1,8 +1,8 @@
+use crate::emulator::GameBoyEmulator;
 use sdl2::pixels::Color;
 use sdl2::rect::Point;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
-use std::sync::{Arc, Mutex};
 
 const COLOR_MAP: [Color; 5] = [
     Color::RGB(155, 188, 15),
@@ -11,22 +11,17 @@ const COLOR_MAP: [Color; 5] = [
     Color::RGB(15, 56, 15),
     Color::RGB(255, 255, 255),
 ];
+
 pub struct PictureDisplayUnit {
     canvas: Canvas<Window>,
     point_vecs: [Vec<Point>; 4],
-    stat: Arc<Mutex<u8>>,
     row: usize,
     ready: bool,
-    frame: Arc<Mutex<[[u8; 160]; 144]>>,
     draw_color: usize,
 }
 
 impl PictureDisplayUnit {
-    pub fn new(
-        canvas: Canvas<Window>,
-        stat: Arc<Mutex<u8>>,
-        frame: Arc<Mutex<[[u8; 160]; 144]>>,
-    ) -> PictureDisplayUnit {
+    pub fn new(canvas: Canvas<Window>) -> PictureDisplayUnit {
         let point_vecs = [
             Vec::<Point>::new(),
             Vec::<Point>::new(),
@@ -36,42 +31,43 @@ impl PictureDisplayUnit {
         let row = 0;
         let ready = true;
         let draw_color = 0;
+
         PictureDisplayUnit {
             canvas,
             point_vecs,
-            stat,
             row,
             ready,
-            frame,
             draw_color,
         }
     }
-    fn get_mode(&self) -> u8 {
-        *self.stat.lock().unwrap() & 0b11
-    }
-    pub fn advance(&mut self) {
+}
+
+impl GameBoyEmulator {
+    pub fn pdu_advance(&mut self) {
         if self.get_mode() == 1 {
-            if self.ready {
-                if self.row < 144 {
-                    let frame = self.frame.lock().unwrap();
+            if self.pdu.ready {
+                if self.pdu.row < 144 {
                     for column in 0..160 {
-                        self.point_vecs[frame[self.row][column] as usize]
-                            .push(Point::new(column as i32, self.row as i32));
+                        self.pdu.point_vecs[self.frame[self.pdu.row][column] as usize]
+                            .push(Point::new(column as i32, self.pdu.row as i32));
                     }
-                    self.row += 1;
+                    self.pdu.row += 1;
                 } else {
-                    if self.draw_color < 4 {
-                        self.canvas.set_draw_color(COLOR_MAP[self.draw_color]);
-                        self.canvas
-                            .draw_points(&self.point_vecs[self.draw_color][..])
+                    if self.pdu.draw_color < 4 {
+                        self.pdu
+                            .canvas
+                            .set_draw_color(COLOR_MAP[self.pdu.draw_color]);
+                        self.pdu
+                            .canvas
+                            .draw_points(&self.pdu.point_vecs[self.pdu.draw_color][..])
                             .expect("Draw failure");
-                        self.draw_color += 1;
+                        self.pdu.draw_color += 1;
                     } else {
-                        self.canvas.present();
-                        self.ready = false;
-                        self.row = 0;
-                        self.draw_color = 0;
-                        self.point_vecs = [
+                        self.pdu.canvas.present();
+                        self.pdu.ready = false;
+                        self.pdu.row = 0;
+                        self.pdu.draw_color = 0;
+                        self.pdu.point_vecs = [
                             Vec::<Point>::new(),
                             Vec::<Point>::new(),
                             Vec::<Point>::new(),
@@ -81,7 +77,7 @@ impl PictureDisplayUnit {
                 }
             }
         } else {
-            self.ready = true
+            self.pdu.ready = true
         }
     }
 }
