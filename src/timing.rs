@@ -1,5 +1,6 @@
 use crate::emulator::GameBoyEmulator;
 use crate::ADVANCE_CYCLES;
+use serde::{Deserialize, Serialize};
 
 const TAC_MAPPING: [u32; 4] = [1024, 16, 64, 256];
 const DIV_ADDR: usize = 0xFF04;
@@ -8,6 +9,7 @@ const TMA_ADDR: usize = 0xFF06;
 const TAC_ADDR: usize = 0xFF07;
 const INT_FLAG_ADDR: usize = 0xFF0F;
 
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Timer {
     prev_clock: u32,
     tima_counter: u32,

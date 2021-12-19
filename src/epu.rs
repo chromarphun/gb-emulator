@@ -28,6 +28,8 @@ impl GameBoyEmulator {
         self.epu.new_directional_presses = 0xF;
         self.epu.new_action_presses = 0xF;
         let state = self.epu.event_pump.keyboard_state();
+        let mut save = false;
+        let mut open = false;
         for code in state.pressed_scancodes() {
             match code {
                 Scancode::Z => self.epu.new_action_presses &= 0b1110,
@@ -38,6 +40,8 @@ impl GameBoyEmulator {
                 Scancode::Left => self.epu.new_directional_presses &= 0b1101,
                 Scancode::Up => self.epu.new_directional_presses &= 0b1011,
                 Scancode::Down => self.epu.new_directional_presses &= 0b0111,
+                Scancode::Num1 => save = true,
+                Scancode::Num2 => open = true,
                 _ => {}
             }
         }
@@ -76,6 +80,17 @@ impl GameBoyEmulator {
                     ..
                 } => self.running = false,
                 _ => {}
+            }
+        }
+        if save {
+            let save_file = rfd::Dialog::save_file().open();
+            if save_file.len() == 1 {
+                self.save_game(&save_file[0])
+            }
+        } else if open {
+            let open_file = rfd::Dialog::pick_file().open();
+            if open_file.len() == 1 {
+                self.open_game(&open_file[0])
             }
         }
     }

@@ -1,4 +1,5 @@
 use crate::ADVANCE_CYCLES;
+use serde::{Deserialize, Serialize};
 use std::cmp;
 
 use crate::emulator::GameBoyEmulator;
@@ -42,6 +43,7 @@ const INT_FLAG_ADDR: usize = 0xFF0F;
 const OAM_START_ADDR: usize = 0xFE00;
 const VRAM_START_ADDR: usize = 0x8000;
 
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PictureProcessingUnit {
     cycle_count: u32,
     possible_sprites: Vec<[u8; 4]>,
@@ -62,7 +64,7 @@ pub struct PictureProcessingUnit {
     column: usize,
     tile_num: i8,
     current_window_row: usize,
-    x_precendence: [u8; 160],
+    x_precendence: Vec<u8>,
     current_sprite_drawing: usize,
     bg_win_enable: bool,
     obj_enable: bool,
@@ -91,7 +93,7 @@ impl PictureProcessingUnit {
             column: 0,
             tile_num: 0,
             current_window_row: 0,
-            x_precendence: [200; 160],
+            x_precendence: vec![200; 160],
             current_sprite_drawing: 0,
             bg_win_enable: false,
             obj_enable: false,
@@ -282,7 +284,7 @@ impl GameBoyEmulator {
             self.ppu.bg_win_enable = self.get_bg_window_enable() == 1;
             self.ppu.obj_enable = self.get_sprite_enable_flag() == 1;
             self.ppu.current_sprite_drawing = 0;
-            self.ppu.x_precendence = [200u8; 160];
+            self.ppu.x_precendence = vec![200u8; 160];
             self.ppu.cycle_count += ADVANCE_CYCLES;
         } else {
             if self.ppu.column < 160 && self.ppu.bg_win_enable {

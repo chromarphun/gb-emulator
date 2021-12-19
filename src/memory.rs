@@ -1,9 +1,17 @@
+use crate::emulator::GameBoyEmulator;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::prelude::*;
 use std::iter::FromIterator;
 use std::path::PathBuf;
+
+use crate::apu::AudioProcessingUnit;
+use crate::cpu::CentralProcessingUnit;
+
+use crate::ppu::PictureProcessingUnit;
+use crate::timing::Timer;
 
 const VRAM_SIZE: usize = 0x2000;
 const IRAM_SIZE: usize = 0x2000;
@@ -43,15 +51,38 @@ enum CartType {
     Mbc1,
     Mbc3,
 }
+#[derive(Serialize, Deserialize)]
+struct SaveGame {
+    vram: Vec<u8>,
+    external_ram: Vec<u8>,
+    internal_ram: Vec<u8>,
+    oam: Vec<u8>,
+    io_registers: Vec<u8>,
+    high_ram: Vec<u8>,
+    interrupt_enable: u8,
+    memory_mode: u8,
+    rom_bank: usize,
+    ram_bank: usize,
+    mbc1_0_bank: usize,
+    mbc1_5_bit_reg: usize,
+    mbc1_2_bit_reg: usize,
+    ram_enable: bool,
+    hold_mem: Vec<u8>,
+    pub in_boot_rom: bool,
+    dma_cycles: u16,
+    cpu: CentralProcessingUnit,
+    ppu: PictureProcessingUnit,
+    timer: Timer,
+}
 
 pub struct MemoryUnit {
     pub rom: Vec<u8>,
-    vram: [u8; VRAM_SIZE],
+    vram: Vec<u8>,
     external_ram: Vec<u8>,
-    internal_ram: [u8; IRAM_SIZE],
-    oam: [u8; OAM_SIZE],
-    io_registers: [u8; IO_SIZE],
-    high_ram: [u8; HRAM_SIZE],
+    internal_ram: Vec<u8>,
+    oam: Vec<u8>,
+    io_registers: Vec<u8>,
+    high_ram: Vec<u8>,
     interrupt_enable: u8,
     memory_mode: u8,
     rom_bank: usize,
@@ -64,7 +95,7 @@ pub struct MemoryUnit {
     cartridge_type: CartType,
     available_rom_banks: u8,
     available_ram_banks: u8,
-    hold_mem: [u8; 256],
+    hold_mem: Vec<u8>,
     pub in_boot_rom: bool,
     pub directional_presses: u8,
     pub action_presses: u8,
@@ -75,11 +106,11 @@ pub struct MemoryUnit {
 impl MemoryUnit {
     pub fn new() -> MemoryUnit {
         let rom = Vec::new();
-        let vram = [0; VRAM_SIZE];
+        let vram = vec![0; VRAM_SIZE];
         let external_ram = Vec::new();
-        let internal_ram = [0; IRAM_SIZE];
-        let oam = [0; OAM_SIZE];
-        let io_registers = [0; IO_SIZE];
+        let internal_ram = vec![0; IRAM_SIZE];
+        let oam = vec![0; OAM_SIZE];
+        let io_registers = vec![0; IO_SIZE];
         let memory_mode = 0;
         let rom_bank = 1;
         let ram_bank = 0;
@@ -88,9 +119,9 @@ impl MemoryUnit {
         let cartridge_type = CartType::Uninitialized;
         let available_rom_banks = 0;
         let available_ram_banks = 0;
-        let hold_mem = [0; 256];
+        let hold_mem = vec![0; 256];
         let interrupt_enable = 0;
-        let high_ram = [0; HRAM_SIZE];
+        let high_ram = vec![0; HRAM_SIZE];
         let in_boot_rom = true;
         let directional_presses = 0xF;
         let action_presses = 0xF;
@@ -378,5 +409,71 @@ impl MemoryUnit {
         self.io_registers[0x30..0x40]
             .try_into()
             .expect("weird length error?")
+    }
+    // fn get_save_header(&self) -> [u8; 9] {
+    //     [
+    //         self.memory_mode,
+    //         self.rom_bank,
+    //         self.ram_bank,
+    //         self.mbc1_0_bank,
+    //         self.mbc1_5_bit_reg,
+    //         self.mbc1_2_bit_reg,
+    //         self.ram_enable,
+    //         self.in_boot_rom,
+    //         self.dma_cycles,
+    //         self.interrupt_enable,
+    //     ]
+    // }
+}
+impl GameBoyEmulator {
+    pub fn save_game(&self, path: &PathBuf) {
+        let save_file = File::create(&path).unwrap();
+        let save_data = SaveGame {
+            vram: self.mem_unit.vram.clone(),
+            external_ram: self.mem_unit.external_ram.clone(),
+            internal_ram: self.mem_unit.internal_ram.clone(),
+            oam: self.mem_unit.oam.clone(),
+            io_registers: self.mem_unit.io_registers.clone(),
+            high_ram: self.mem_unit.high_ram.clone(),
+            interrupt_enable: self.mem_unit.interrupt_enable,
+            memory_mode: self.mem_unit.memory_mode,
+            rom_bank: self.mem_unit.rom_bank,
+            ram_bank: self.mem_unit.ram_bank,
+            mbc1_0_bank: self.mem_unit.mbc1_0_bank,
+            mbc1_5_bit_reg: self.mem_unit.mbc1_5_bit_reg,
+            mbc1_2_bit_reg: self.mem_unit.mbc1_2_bit_reg,
+            ram_enable: self.mem_unit.ram_enable,
+            hold_mem: self.mem_unit.hold_mem.clone(),
+            in_boot_rom: self.mem_unit.in_boot_rom,
+            dma_cycles: self.mem_unit.dma_cycles,
+            cpu: self.cpu,
+            ppu: self.ppu.clone(),
+            timer: self.timer,
+        };
+        bincode::serialize_into(save_file, &save_data).unwrap();
+    }
+    pub fn open_game(&mut self, path: &PathBuf) {
+        let open_file = File::open(&path).unwrap();
+        let open_data: SaveGame = bincode::deserialize_from(open_file).unwrap();
+        self.mem_unit.vram = open_data.vram;
+        self.mem_unit.external_ram = open_data.external_ram;
+        self.mem_unit.internal_ram = open_data.internal_ram;
+        self.mem_unit.oam = open_data.oam;
+        self.mem_unit.io_registers = open_data.io_registers;
+        self.mem_unit.high_ram = open_data.high_ram;
+        self.mem_unit.interrupt_enable = open_data.interrupt_enable;
+        self.mem_unit.memory_mode = open_data.memory_mode;
+        self.mem_unit.rom_bank = open_data.rom_bank;
+        self.mem_unit.ram_bank = open_data.ram_bank;
+        self.mem_unit.mbc1_0_bank = open_data.mbc1_0_bank;
+        self.mem_unit.mbc1_5_bit_reg = open_data.mbc1_5_bit_reg;
+        self.mem_unit.mbc1_2_bit_reg = open_data.mbc1_2_bit_reg;
+        self.mem_unit.ram_enable = open_data.ram_enable;
+        self.mem_unit.hold_mem = open_data.hold_mem;
+        self.mem_unit.in_boot_rom = open_data.in_boot_rom;
+        self.mem_unit.dma_cycles = open_data.dma_cycles;
+        self.cpu = open_data.cpu;
+        self.ppu = open_data.ppu;
+        self.timer = open_data.timer;
     }
 }

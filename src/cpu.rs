@@ -1,4 +1,5 @@
 use crate::emulator::GameBoyEmulator;
+use serde::{Deserialize, Serialize};
 // use std::fs::File;
 // use std::io::prelude::*;
 
@@ -320,7 +321,7 @@ fn split_u16(val: u16) -> (u8, u8) {
 fn split_byte(val: u8) -> (u8, u8) {
     (val >> 4, val & 0xF)
 }
-
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct CentralProcessingUnit {
     ime: bool,
     regs: [u8; NUM_REG],
