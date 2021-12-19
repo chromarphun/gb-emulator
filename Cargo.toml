@@ -11,3 +11,4 @@ debug = true
 [dependencies]
 sdl2="0.34"
 spin_sleep="1.0.0"
+rfd = "0.0.3"

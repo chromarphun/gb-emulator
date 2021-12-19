@@ -14,6 +14,9 @@ const ADVANCE_CYCLES: u32 = 4;
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut em = emulator::GameBoyEmulator::new();
-    em.load_rom(&args[1]);
-    em.run()
+    let res = rfd::Dialog::pick_file().open();
+    if res.len() == 1 {
+        em.load_rom(&res[0]);
+        em.run()
+    }
 }

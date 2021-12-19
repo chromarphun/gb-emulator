@@ -1,6 +1,6 @@
 use crate::emulator::GameBoyEmulator;
-use std::fs::File;
-use std::io::prelude::*;
+// use std::fs::File;
+// use std::io::prelude::*;
 
 const NUM_REG: usize = 7;
 const REG_A: usize = 0;

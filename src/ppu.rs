@@ -1,9 +1,5 @@
 use crate::ADVANCE_CYCLES;
 use std::cmp;
-use std::convert::TryInto;
-use std::sync::mpsc;
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
 
 use crate::emulator::GameBoyEmulator;
 
@@ -13,7 +9,7 @@ const TILE_WIDTH: usize = 8;
 const BG_TILE_HEIGHT: usize = 8;
 const BYTES_PER_TILE: usize = 16;
 const BYTES_PER_TILE_ROW: usize = 2;
-const SCREEN_PX_HEIGHT: usize = 144;
+
 const VRAM_BLOCK_SIZE: usize = 128;
 
 const OAM_SCAN_DOTS: u32 = 80;
@@ -25,7 +21,7 @@ const HBLANK_DOTS: u32 = 204;
 const ROW_DOTS: u32 = 456;
 
 const BYTES_PER_OAM_ENTRY: usize = 4;
-const SPIRTES_IN_OAM: usize = 40;
+
 const OAM_Y_INDEX: usize = 0;
 const OAM_X_INDEX: usize = 1;
 const OAM_TILE_INDEX: usize = 2;

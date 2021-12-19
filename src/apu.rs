@@ -6,8 +6,6 @@ use std::sync::{Arc, Mutex};
 
 use crate::emulator::{ADVANCE_CYCLES, CYCLES_PER_SAMPLE};
 
-const CLOCK: u32 = 1_048_576;
-
 const DUTY_CONVERSION: [f32; 4] = [0.125, 0.25, 0.5, 0.75];
 
 const VOLUME_SHIFT_CONVERSION: [u8; 4] = [4, 0, 1, 2];
@@ -28,8 +26,6 @@ const NR31_ADDR: usize = 0xFF1B;
 const NR32_ADDR: usize = 0xFF1C;
 const NR33_ADDR: usize = 0xFF1D;
 const NR34_ADDR: usize = 0xFF1E;
-
-const WAVE_RAM_START_ADDR: usize = 0xFF30;
 
 const NR41_ADDR: usize = 0xFF20;
 const NR42_ADDR: usize = 0xFF21;
@@ -164,7 +160,7 @@ impl AudioCallback for Channel4 {
 }
 
 pub struct AudioProcessingUnit {
-    audio_subsystem: AudioSubsystem,
+    _audio_subsystem: AudioSubsystem,
     channel_1_frequency: Arc<Mutex<u32>>,
     channel_2_frequency: Arc<Mutex<u32>>,
     channel_1_sweep_count: u8,
@@ -192,10 +188,10 @@ pub struct AudioProcessingUnit {
     channel_4_frequency: Arc<Mutex<u32>>,
     channel_4_width: Arc<Mutex<bool>>,
     channel_4_volume: Arc<Mutex<u8>>,
-    channel_1_device: AudioDevice<Channel1>,
-    channel_2_device: AudioDevice<Channel2>,
-    channel_3_device: AudioDevice<Channel3>,
-    channel_4_device: AudioDevice<Channel4>,
+    _channel_1_device: AudioDevice<Channel1>,
+    _channel_2_device: AudioDevice<Channel2>,
+    _channel_3_device: AudioDevice<Channel3>,
+    _channel_4_device: AudioDevice<Channel4>,
 }
 
 impl AudioProcessingUnit {
@@ -257,7 +253,7 @@ impl AudioProcessingUnit {
             samples: Some(32), // default sample size
         };
         let channel_1_device = audio_subsystem
-            .open_playback(None, &desired_spec, |spec| {
+            .open_playback(None, &desired_spec, |_spec| {
                 // initialize the audio callback
                 Channel1 {
                     phase: 0.0,
@@ -270,7 +266,7 @@ impl AudioProcessingUnit {
             .unwrap();
 
         let channel_2_device = audio_subsystem
-            .open_playback(None, &desired_spec, |spec| {
+            .open_playback(None, &desired_spec, |_spec| {
                 // initialize the audio callback
                 Channel2 {
                     phase: 0.0,
@@ -283,7 +279,7 @@ impl AudioProcessingUnit {
             .unwrap();
 
         let channel_3_device = audio_subsystem
-            .open_playback(None, &desired_spec, |spec| {
+            .open_playback(None, &desired_spec, |_spec| {
                 // initialize the audio callback
                 Channel3 {
                     output_level: channel_3_output_level_cb,
@@ -296,7 +292,7 @@ impl AudioProcessingUnit {
             })
             .unwrap();
         let channel_4_device = audio_subsystem
-            .open_playback(None, &desired_spec, |spec| {
+            .open_playback(None, &desired_spec, |_spec| {
                 // initialize the audio callback
                 Channel4 {
                     phase: 0.0,
@@ -314,7 +310,7 @@ impl AudioProcessingUnit {
         channel_3_device.resume();
         channel_4_device.resume();
         AudioProcessingUnit {
-            audio_subsystem,
+            _audio_subsystem: audio_subsystem,
             channel_1_frequency,
             channel_2_frequency,
             cycle_count_1,
@@ -342,10 +338,10 @@ impl AudioProcessingUnit {
             channel_4_frequency,
             channel_4_width,
             channel_4_volume,
-            channel_1_device,
-            channel_2_device,
-            channel_3_device,
-            channel_4_device,
+            _channel_1_device: channel_1_device,
+            _channel_2_device: channel_2_device,
+            _channel_3_device: channel_3_device,
+            _channel_4_device: channel_4_device,
         }
     }
 }
@@ -495,7 +491,6 @@ impl GameBoyEmulator {
         if *self.apu.channel_1_enable.lock().unwrap() {
             *self.apu.channel_1_duty.lock().unwrap() =
                 DUTY_CONVERSION[((self.mem_unit.get_memory(NR11_ADDR) >> 6) & 0b11) as usize];
-            let duty = *self.apu.channel_1_duty.lock().unwrap();
             let mut channel_1_frequency = (((self.mem_unit.get_memory(NR14_ADDR) & 0b111) as u32)
                 << 8)
                 + self.mem_unit.get_memory(NR13_ADDR) as u32;

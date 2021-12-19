@@ -3,6 +3,7 @@ use std::convert::TryInto;
 use std::fs::File;
 use std::io::prelude::*;
 use std::iter::FromIterator;
+use std::path::PathBuf;
 
 const VRAM_SIZE: usize = 0x2000;
 const IRAM_SIZE: usize = 0x2000;
@@ -68,7 +69,7 @@ pub struct MemoryUnit {
     pub directional_presses: u8,
     pub action_presses: u8,
     dma_cycles: u16,
-    InvalidIO: HashSet<usize>,
+    invalid_io: HashSet<usize>,
 }
 
 impl MemoryUnit {
@@ -119,7 +120,7 @@ impl MemoryUnit {
             directional_presses,
             action_presses,
             dma_cycles,
-            InvalidIO: HashSet::from_iter(vec![
+            invalid_io: HashSet::from_iter(vec![
                 0xFF03, 0xFF08, 0xFF09, 0xFF0A, 0xFF0B, 0xFF0C, 0xFF0D, 0xFF0E, 0xFF15, 0xFF1F,
                 0xFF27, 0xFF28, 0xFF29,
             ]),
@@ -155,7 +156,7 @@ impl MemoryUnit {
             0xE000..=0xFDFF => self.internal_ram[addr - 0xE000],
             0xFE00..=0xFE9F => self.oam[addr - 0xFE00],
             0xFF00..=0xFF4B => {
-                if self.InvalidIO.contains(&addr) {
+                if self.invalid_io.contains(&addr) {
                     0xFF
                 } else {
                     self.io_registers[addr - 0xFF00]
@@ -302,7 +303,7 @@ impl MemoryUnit {
     fn unload_boot_rom(&mut self) {
         self.rom[..256].copy_from_slice(&self.hold_mem);
     }
-    pub fn load_rom(&mut self, path: &str) {
+    pub fn load_rom(&mut self, path: &PathBuf) {
         let mut f = File::open(path).expect("File problem!");
         f.read_to_end(&mut self.rom).expect("Read issue!");
         self.cartridge_type = match self.rom[CART_TYPE_ADDR] {

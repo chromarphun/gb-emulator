@@ -6,8 +6,7 @@ use crate::pdu::PictureDisplayUnit;
 use crate::ppu::PictureProcessingUnit;
 use crate::timing::Timer;
 use std::fs::File;
-use std::io::prelude::*;
-use std::io::Write;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 const PERIODS_PER_SECOND: u32 = 64;
@@ -68,7 +67,7 @@ impl GameBoyEmulator {
             running: true,
         }
     }
-    pub fn load_rom(&mut self, path: &str) {
+    pub fn load_rom(&mut self, path: &PathBuf) {
         self.mem_unit.load_rom(path);
     }
     pub fn run(&mut self) {
