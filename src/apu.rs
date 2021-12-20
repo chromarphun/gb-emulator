@@ -2,7 +2,7 @@ use crate::emulator::GameBoyEmulator;
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
 use sdl2::AudioSubsystem;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::emulator::{ADVANCE_CYCLES, CYCLES_PER_SAMPLE};
 
@@ -32,12 +32,21 @@ const NR42_ADDR: usize = 0xFF21;
 const NR43_ADDR: usize = 0xFF22;
 const NR44_ADDR: usize = 0xFF23;
 
+const NR50_ADDR: usize = 0xFF24;
+const NR51_ADDR: usize = 0xFF25;
+const NR52_ADDR: usize = 0xFF26;
+
 struct Channel1 {
     frequency: Arc<Mutex<u32>>,
     phase: f32,
     enable: Arc<Mutex<bool>>,
     volume: Arc<Mutex<u8>>,
     duty: Arc<Mutex<f32>>,
+    so1_enable: Arc<Mutex<u8>>,
+    so1_value: Arc<RwLock<f32>>,
+    so2_enable: Arc<Mutex<u8>>,
+    so2_value: Arc<RwLock<f32>>,
+    all_sound_enable: Arc<RwLock<bool>>,
 }
 
 impl AudioCallback for Channel1 {
@@ -45,16 +54,28 @@ impl AudioCallback for Channel1 {
     fn callback(&mut self, out: &mut [f32]) {
         let frequency = *self.frequency.lock().unwrap();
         let duty = *self.duty.lock().unwrap();
+        let mut right = true;
+        let so1_mod = *self.so1_enable.lock().unwrap() as f32 * (*self.so1_value.read().unwrap());
+        let so2_mod = *self.so2_enable.lock().unwrap() as f32 * (*self.so2_value.read().unwrap());
+        let mut so_mod = so1_mod;
+        let enable = *self.enable.lock().unwrap() & *self.all_sound_enable.read().unwrap();
         for x in out.iter_mut() {
             let vol = *self.volume.lock().unwrap();
-            if !*self.enable.lock().unwrap() {
+            if !enable {
                 *x = 0.0;
             } else if self.phase < duty {
                 *x = 0.0;
             } else {
-                *x = (vol as f32) / 100.0;
+                *x = (vol as f32 * so_mod) / 100.0;
             }
-            self.phase = (self.phase + (131072.0 / (2048.0 - frequency as f32)) / 44100.0) % 1.0;
+            right = !right;
+            if right {
+                self.phase =
+                    (self.phase + (131072.0 / (2048.0 - frequency as f32)) / 44100.0) % 1.0;
+                so_mod = so1_mod;
+            } else {
+                so_mod = so2_mod;
+            }
         }
     }
 }
@@ -68,6 +89,11 @@ struct Channel3 {
     phase: f32,
     enable: Arc<Mutex<bool>>,
     frequency: Arc<Mutex<u32>>,
+    so1_enable: Arc<Mutex<u8>>,
+    so1_value: Arc<RwLock<f32>>,
+    so2_enable: Arc<Mutex<u8>>,
+    so2_value: Arc<RwLock<f32>>,
+    all_sound_enable: Arc<RwLock<bool>>,
 }
 
 impl AudioCallback for Channel3 {
@@ -75,7 +101,12 @@ impl AudioCallback for Channel3 {
     fn callback(&mut self, out: &mut [f32]) {
         let output_shift =
             VOLUME_SHIFT_CONVERSION[((*self.output_level.lock().unwrap() >> 5) & 0b11) as usize];
-        if !*self.enable.lock().unwrap() {
+        let mut right = true;
+        let so1_mod = *self.so1_enable.lock().unwrap() as f32 * (*self.so1_value.read().unwrap());
+        let so2_mod = *self.so2_enable.lock().unwrap() as f32 * (*self.so2_value.read().unwrap());
+        let mut so_mod = so1_mod;
+        let enable = *self.enable.lock().unwrap() & *self.all_sound_enable.read().unwrap();
+        if !enable {
             for x in out.iter_mut() {
                 *x = 0.0;
             }
@@ -85,17 +116,25 @@ impl AudioCallback for Channel3 {
             let wave_ram = self.wave_ram.lock().unwrap();
             for x in out.iter_mut() {
                 if *pointer % 2 == 0 {
-                    *x = ((wave_ram[*pointer / 2] >> 4) >> output_shift) as f32 / 100.0;
+                    *x = ((wave_ram[*pointer / 2] >> 4) >> output_shift) as f32 * so_mod / 100.0;
                 } else {
-                    *x = ((wave_ram[(*pointer - 1) / 2] & 0xF) >> output_shift) as f32 / 100.0;
+                    *x = ((wave_ram[(*pointer - 1) / 2] & 0xF) >> output_shift) as f32 * so_mod
+                        / 100.0;
                 }
-                self.phase = (self.phase
-                    + CYCLES_PER_SAMPLE as f32 / (2048.0 - *self.frequency.lock().unwrap() as f32))
-                    % 1.0;
-                if self.phase < old_phase {
-                    *pointer = (*pointer + 1) % 32;
+                right = !right;
+                if right {
+                    self.phase = (self.phase
+                        + CYCLES_PER_SAMPLE as f32
+                            / (2048.0 - *self.frequency.lock().unwrap() as f32))
+                        % 1.0;
+                    if self.phase < old_phase {
+                        *pointer = (*pointer + 1) % 32;
+                    }
+                    old_phase = self.phase;
+                    so_mod = so1_mod;
+                } else {
+                    so_mod = so2_mod;
                 }
-                old_phase = self.phase;
             }
         }
     }
@@ -109,6 +148,11 @@ struct Channel4 {
     width: Arc<Mutex<bool>>,
     volume: Arc<Mutex<u8>>,
     out_1_bit: bool,
+    so1_enable: Arc<Mutex<u8>>,
+    so1_value: Arc<RwLock<f32>>,
+    so2_enable: Arc<Mutex<u8>>,
+    so2_value: Arc<RwLock<f32>>,
+    all_sound_enable: Arc<RwLock<bool>>,
 }
 
 impl Channel4 {
@@ -128,30 +172,39 @@ impl Channel4 {
 impl AudioCallback for Channel4 {
     type Channel = f32;
     fn callback(&mut self, out: &mut [f32]) {
-        let enable = *self.enable.lock().unwrap();
+        let enable = *self.enable.lock().unwrap() & *self.all_sound_enable.read().unwrap();
         let volume = *self.volume.lock().unwrap();
-
         let frequency = *self.frequency.lock().unwrap();
+        let mut right = true;
+        let so1_mod = *self.so1_enable.lock().unwrap() as f32 * (*self.so1_value.read().unwrap());
+        let so2_mod = *self.so2_enable.lock().unwrap() as f32 * (*self.so2_value.read().unwrap());
+        let mut so_mod = so1_mod;
         for x in out.iter_mut() {
             let old_phase = self.phase;
             if !enable {
                 *x = 0.0;
             } else {
                 if self.out_1_bit {
-                    *x = volume as f32 / 100.0;
+                    *x = volume as f32 * so_mod / 100.0;
                 } else {
                     *x = 0.0;
                 }
             }
-            let phase_add = CYCLES_PER_SAMPLE as f32 / frequency as f32;
-            self.phase = (self.phase + phase_add) % 1.0;
+            right = !right;
+            if right {
+                let phase_add = CYCLES_PER_SAMPLE as f32 / frequency as f32;
+                self.phase = (self.phase + phase_add) % 1.0;
 
-            if self.phase < old_phase {
-                self.noise_lsfr();
-            } else if phase_add >= 1.0 {
-                for _ in 0..phase_add as u8 {
+                if self.phase < old_phase {
                     self.noise_lsfr();
+                } else if phase_add >= 1.0 {
+                    for _ in 0..phase_add as u8 {
+                        self.noise_lsfr();
+                    }
                 }
+                so_mod = so1_mod;
+            } else {
+                so_mod = so2_mod;
             }
         }
 
@@ -169,18 +222,31 @@ pub struct AudioProcessingUnit {
     cycle_count_2: u32,
     cycle_count_3: u32,
     cycle_count_4: u32,
+    so1_level: Arc<RwLock<f32>>,
+    so2_level: Arc<RwLock<f32>>,
+    nr51_data: u8,
+    all_sound_enable: Arc<RwLock<bool>>,
     channel_1_enable: Arc<Mutex<bool>>,
     channel_1_volume: Arc<Mutex<u8>>,
     channel_1_volume_count: u8,
     channel_1_duty: Arc<Mutex<f32>>,
+    channel_1_so1_enable: Arc<Mutex<u8>>,
+    channel_1_so2_enable: Arc<Mutex<u8>>,
+
     channel_2_enable: Arc<Mutex<bool>>,
     channel_2_volume: Arc<Mutex<u8>>,
     channel_2_volume_count: u8,
     channel_2_duty: Arc<Mutex<f32>>,
+    channel_2_so1_enable: Arc<Mutex<u8>>,
+    channel_2_so2_enable: Arc<Mutex<u8>>,
+
     channel_3_pointer: Arc<Mutex<usize>>,
     channel_3_enable: Arc<Mutex<bool>>,
     channel_3_frequency: Arc<Mutex<u32>>,
     channel_3_output_level: Arc<Mutex<u8>>,
+    channel_3_so1_enable: Arc<Mutex<u8>>,
+    channel_3_so2_enable: Arc<Mutex<u8>>,
+
     wave_ram: Arc<Mutex<[u8; 16]>>,
     channel_4_volume_count: u8,
     channel_4_lsfr: Arc<Mutex<u16>>,
@@ -188,6 +254,9 @@ pub struct AudioProcessingUnit {
     channel_4_frequency: Arc<Mutex<u32>>,
     channel_4_width: Arc<Mutex<bool>>,
     channel_4_volume: Arc<Mutex<u8>>,
+    channel_4_so1_enable: Arc<Mutex<u8>>,
+    channel_4_so2_enable: Arc<Mutex<u8>>,
+
     _channel_1_device: AudioDevice<Channel1>,
     _channel_2_device: AudioDevice<Channel2>,
     _channel_3_device: AudioDevice<Channel3>,
@@ -200,6 +269,10 @@ impl AudioProcessingUnit {
         let cycle_count_2 = 0;
         let cycle_count_3 = 0;
         let cycle_count_4 = 0;
+        let so1_level = Arc::new(RwLock::new(0.0));
+        let so2_level = Arc::new(RwLock::new(0.0));
+        let all_sound_enable = Arc::new(RwLock::new(true));
+
         let channel_1_sweep_count = 0;
         let channel_1_enable = Arc::new(Mutex::new(false));
         let channel_1_volume = Arc::new(Mutex::new(0));
@@ -211,6 +284,13 @@ impl AudioProcessingUnit {
         let channel_1_enable_cb = Arc::clone(&channel_1_enable);
         let channel_1_duty = Arc::new(Mutex::new(0.0));
         let channel_1_duty_cb = Arc::clone(&channel_1_duty);
+        let channel_1_so1_enable = Arc::new(Mutex::new(0));
+        let channel_1_so1_enable_cb = Arc::clone(&channel_1_so1_enable);
+        let channel_1_so2_enable = Arc::new(Mutex::new(0));
+        let channel_1_so2_enable_cb = Arc::clone(&channel_1_so2_enable);
+        let channel_1_so1_level_cb = Arc::clone(&so1_level);
+        let channel_1_so2_level_cb = Arc::clone(&so2_level);
+        let channel_1_all_sound_enable_cb = Arc::clone(&all_sound_enable);
 
         let channel_2_volume = Arc::new(Mutex::new(0));
         let channel_2_volume_cb = Arc::clone(&channel_2_volume);
@@ -221,6 +301,13 @@ impl AudioProcessingUnit {
         let channel_2_enable_cb = Arc::clone(&channel_2_enable);
         let channel_2_duty = Arc::new(Mutex::new(0.0));
         let channel_2_duty_cb = Arc::clone(&channel_2_duty);
+        let channel_2_so1_enable = Arc::new(Mutex::new(0));
+        let channel_2_so1_enable_cb = Arc::clone(&channel_2_so1_enable);
+        let channel_2_so2_enable = Arc::new(Mutex::new(0));
+        let channel_2_so2_enable_cb = Arc::clone(&channel_2_so2_enable);
+        let channel_2_so1_level_cb = Arc::clone(&so1_level);
+        let channel_2_so2_level_cb = Arc::clone(&so2_level);
+        let channel_2_all_sound_enable_cb = Arc::clone(&all_sound_enable);
 
         let channel_3_pointer = Arc::new(Mutex::new(0));
         let channel_3_pointer_cb = Arc::clone(&channel_3_pointer);
@@ -230,9 +317,15 @@ impl AudioProcessingUnit {
         let channel_3_output_level_cb = Arc::clone(&channel_3_output_level);
         let channel_3_enable = Arc::new(Mutex::new(false));
         let channel_3_enable_cb = Arc::clone(&channel_3_enable);
-
         let channel_3_frequency = Arc::new(Mutex::new(0));
         let channel_3_frequency_cb = Arc::clone(&channel_3_frequency);
+        let channel_3_so1_enable = Arc::new(Mutex::new(0));
+        let channel_3_so1_enable_cb = Arc::clone(&channel_3_so1_enable);
+        let channel_3_so2_enable = Arc::new(Mutex::new(0));
+        let channel_3_so2_enable_cb = Arc::clone(&channel_3_so2_enable);
+        let channel_3_so1_level_cb = Arc::clone(&so1_level);
+        let channel_3_so2_level_cb = Arc::clone(&so2_level);
+        let channel_3_all_sound_enable_cb = Arc::clone(&all_sound_enable);
 
         let channel_4_volume_count = 0;
         let channel_4_lsfr = Arc::new(Mutex::new(0u16));
@@ -240,16 +333,22 @@ impl AudioProcessingUnit {
         let channel_4_frequency = Arc::new(Mutex::new(0));
         let channel_4_width = Arc::new(Mutex::new(false));
         let channel_4_volume = Arc::new(Mutex::new(0));
-
         let channel_4_lsfr_cb = Arc::clone(&channel_4_lsfr);
         let channel_4_enable_cb = Arc::clone(&channel_4_enable);
         let channel_4_frequency_cb = Arc::clone(&channel_4_frequency);
         let channel_4_width_cb = Arc::clone(&channel_4_width);
         let channel_4_volume_cb = Arc::clone(&channel_4_volume);
+        let channel_4_so1_enable = Arc::new(Mutex::new(0));
+        let channel_4_so1_enable_cb = Arc::clone(&channel_4_so1_enable);
+        let channel_4_so2_enable = Arc::new(Mutex::new(0));
+        let channel_4_so2_enable_cb = Arc::clone(&channel_4_so2_enable);
+        let channel_4_so1_level_cb = Arc::clone(&so1_level);
+        let channel_4_so2_level_cb = Arc::clone(&so2_level);
+        let channel_4_all_sound_enable_cb = Arc::clone(&all_sound_enable);
 
         let desired_spec = AudioSpecDesired {
             freq: Some(44100),
-            channels: Some(1), // mono
+            channels: Some(2), // mono
             samples: Some(32), // default sample size
         };
         let channel_1_device = audio_subsystem
@@ -261,6 +360,11 @@ impl AudioProcessingUnit {
                     enable: channel_1_enable_cb,
                     volume: channel_1_volume_cb,
                     duty: channel_1_duty_cb,
+                    so1_enable: channel_1_so1_enable_cb,
+                    so1_value: channel_1_so1_level_cb,
+                    so2_enable: channel_1_so2_enable_cb,
+                    so2_value: channel_1_so2_level_cb,
+                    all_sound_enable: channel_1_all_sound_enable_cb,
                 }
             })
             .unwrap();
@@ -274,6 +378,11 @@ impl AudioProcessingUnit {
                     enable: channel_2_enable_cb,
                     volume: channel_2_volume_cb,
                     duty: channel_2_duty_cb,
+                    so1_enable: channel_2_so1_enable_cb,
+                    so1_value: channel_2_so1_level_cb,
+                    so2_enable: channel_2_so2_enable_cb,
+                    so2_value: channel_2_so2_level_cb,
+                    all_sound_enable: channel_2_all_sound_enable_cb,
                 }
             })
             .unwrap();
@@ -288,6 +397,11 @@ impl AudioProcessingUnit {
                     phase: 0.0,
                     enable: channel_3_enable_cb,
                     frequency: channel_3_frequency_cb,
+                    so1_enable: channel_3_so1_enable_cb,
+                    so1_value: channel_3_so1_level_cb,
+                    so2_enable: channel_3_so2_enable_cb,
+                    so2_value: channel_3_so2_level_cb,
+                    all_sound_enable: channel_3_all_sound_enable_cb,
                 }
             })
             .unwrap();
@@ -302,6 +416,11 @@ impl AudioProcessingUnit {
                     width: channel_4_width_cb,
                     volume: channel_4_volume_cb,
                     out_1_bit: true,
+                    so1_enable: channel_4_so1_enable_cb,
+                    so1_value: channel_4_so1_level_cb,
+                    so2_enable: channel_4_so2_enable_cb,
+                    so2_value: channel_4_so2_level_cb,
+                    all_sound_enable: channel_4_all_sound_enable_cb,
                 }
             })
             .unwrap();
@@ -317,20 +436,30 @@ impl AudioProcessingUnit {
             cycle_count_2,
             cycle_count_3,
             cycle_count_4,
+            so1_level,
+            so2_level,
+            nr51_data: 0,
+            all_sound_enable,
             channel_1_sweep_count,
             channel_1_sweep_enable,
             channel_1_enable,
             channel_1_volume,
             channel_1_volume_count,
             channel_1_duty,
+            channel_1_so1_enable,
+            channel_1_so2_enable,
             channel_2_enable,
             channel_2_volume,
             channel_2_volume_count,
             channel_2_duty,
+            channel_2_so1_enable,
+            channel_2_so2_enable,
             channel_3_pointer,
             channel_3_enable,
             channel_3_frequency,
             channel_3_output_level,
+            channel_3_so1_enable,
+            channel_3_so2_enable,
             wave_ram,
             channel_4_volume_count,
             channel_4_lsfr,
@@ -338,6 +467,8 @@ impl AudioProcessingUnit {
             channel_4_frequency,
             channel_4_width,
             channel_4_volume,
+            channel_4_so1_enable,
+            channel_4_so2_enable,
             _channel_1_device: channel_1_device,
             _channel_2_device: channel_2_device,
             _channel_3_device: channel_3_device,
@@ -467,6 +598,9 @@ impl GameBoyEmulator {
     fn channel_1_advance(&mut self) {
         let initialize = (self.mem_unit.get_memory(NR14_ADDR) >> 7) == 1;
         let mut length = 64 - (self.mem_unit.get_memory(NR11_ADDR) & 0b111111);
+
+        *self.apu.channel_1_so1_enable.lock().unwrap() = self.apu.nr51_data & 1;
+        *self.apu.channel_1_so2_enable.lock().unwrap() = (self.apu.nr51_data >> 4) & 1;
         if initialize {
             if length == 0 {
                 length = 64;
@@ -511,6 +645,8 @@ impl GameBoyEmulator {
     fn channel_2_advance(&mut self) {
         let initialize = (self.mem_unit.get_memory(NR24_ADDR) >> 7) == 1;
         let mut length = 64 - (self.mem_unit.get_memory(NR21_ADDR) & 0b111111);
+        *self.apu.channel_2_so1_enable.lock().unwrap() = (self.apu.nr51_data >> 1) & 1;
+        *self.apu.channel_2_so2_enable.lock().unwrap() = (self.apu.nr51_data >> 5) & 1;
         if initialize {
             if length == 0 {
                 length = 64;
@@ -540,6 +676,8 @@ impl GameBoyEmulator {
     fn channel_3_advance(&mut self) {
         let initialize = (self.mem_unit.get_memory(NR34_ADDR) >> 7) == 1;
         let mut length = 256 - self.mem_unit.get_memory(NR31_ADDR) as u16 & 0b11111;
+        *self.apu.channel_3_so1_enable.lock().unwrap() = (self.apu.nr51_data >> 2) & 1;
+        *self.apu.channel_3_so2_enable.lock().unwrap() = (self.apu.nr51_data >> 6) & 1;
         if initialize {
             if length == 0 {
                 length = 256;
@@ -565,6 +703,8 @@ impl GameBoyEmulator {
     fn channel_4_advance(&mut self) {
         let initialize = (self.mem_unit.get_memory(NR44_ADDR) >> 7) == 1;
         let mut length = 64 - (self.mem_unit.get_memory(NR41_ADDR) & 0b11111);
+        *self.apu.channel_4_so1_enable.lock().unwrap() = (self.apu.nr51_data >> 3) & 1;
+        *self.apu.channel_4_so2_enable.lock().unwrap() = (self.apu.nr51_data >> 7) & 1;
         if initialize {
             if length == 0 {
                 length = 64;
@@ -601,6 +741,13 @@ impl GameBoyEmulator {
         }
     }
     pub fn apu_advance(&mut self) {
+        *self.apu.so1_level.write().unwrap() =
+            ((self.mem_unit.get_memory(NR50_ADDR) >> 4) & 0b11) as f32 / 7.0;
+        *self.apu.so2_level.write().unwrap() =
+            (self.mem_unit.get_memory(NR50_ADDR) & 0b11) as f32 / 7.0;
+        self.apu.nr51_data = self.mem_unit.get_memory(NR51_ADDR);
+        *self.apu.all_sound_enable.write().unwrap() =
+            (self.mem_unit.get_memory(NR52_ADDR) >> 7) == 1;
         self.channel_1_advance();
         self.channel_2_advance();
         self.channel_3_advance();
