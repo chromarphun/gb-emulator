@@ -7,8 +7,8 @@ use std::io::prelude::*;
 use std::iter::FromIterator;
 use std::path::PathBuf;
 
-use crate::apu::AudioProcessingUnit;
 use crate::cpu::CentralProcessingUnit;
+use crate::emulator::RequestSource;
 
 use crate::ppu::PictureProcessingUnit;
 use crate::timing::Timer;
@@ -23,6 +23,7 @@ const ROM_BANK_ADDR: usize = 0x148;
 const RAM_BANK_ADDR: usize = 0x149;
 const INT_FLAG_ADDR: usize = 0xFF0F;
 const P1_ADDR: usize = 0xFF00;
+const SOURCE: RequestSource = RequestSource::MAU;
 
 const BOOT_ROM: [u8; 256] = [
     0x31, 0xFE, 0xFF, 0xAF, 0x21, 0xFF, 0x9F, 0x32, 0xCB, 0x7C, 0x20, 0xFB, 0x21, 0x26, 0xFF, 0x0E,
@@ -100,6 +101,7 @@ pub struct MemoryUnit {
     pub directional_presses: u8,
     pub action_presses: u8,
     dma_cycles: u16,
+    pub ppu_mode: u8,
     invalid_io: HashSet<usize>,
 }
 
@@ -151,13 +153,14 @@ impl MemoryUnit {
             directional_presses,
             action_presses,
             dma_cycles,
+            ppu_mode: 0,
             invalid_io: HashSet::from_iter(vec![
                 0xFF03, 0xFF08, 0xFF09, 0xFF0A, 0xFF0B, 0xFF0C, 0xFF0D, 0xFF0E, 0xFF15, 0xFF1F,
                 0xFF27, 0xFF28, 0xFF29,
             ]),
         }
     }
-    pub fn get_memory(&self, addr: impl Into<usize>) -> u8 {
+    pub fn get_memory(&self, addr: impl Into<usize>, source: RequestSource) -> u8 {
         let addr = addr.into() as usize;
         match addr {
             0x0000..=0x3FFF => match self.cartridge_type {
@@ -170,7 +173,13 @@ impl MemoryUnit {
                 CartType::Mbc1 | CartType::Mbc3 => self.rom[addr + 0x4000 * (self.rom_bank - 1)],
                 _ => panic!("Bad cart type."),
             },
-            0x8000..=0x9FFF => self.vram[addr - 0x8000],
+            0x8000..=0x9FFF => {
+                if self.ppu_mode != 3 || source == RequestSource::PPU {
+                    self.vram[addr - 0x8000]
+                } else {
+                    0xFF
+                }
+            }
             0xA000..=0xBFFF => {
                 if self.available_ram_banks == 0 || !self.ram_enable || self.memory_mode == 1 {
                     return 0xFF;
@@ -198,7 +207,7 @@ impl MemoryUnit {
             _ => 0xFF,
         }
     }
-    pub fn write_memory(&mut self, addr: impl Into<usize>, val: u8) {
+    pub fn write_memory(&mut self, addr: impl Into<usize>, val: u8, source: RequestSource) {
         let addr = addr.into() as usize;
         match addr {
             0x0000..=0x1FFF => match val {
@@ -226,6 +235,7 @@ impl MemoryUnit {
                     );
                 }
                 CartType::Mbc3 => {
+                    //println!("changing rom bank to {}", val);
                     self.rom_bank = val as usize & MASKING_BITS[self.rom_bank_bits];
                 }
                 _ => panic!("Bad cart type."),
@@ -247,9 +257,11 @@ impl MemoryUnit {
                 }
                 CartType::Mbc3 => {
                     if val < 0x4 {
+                        println!("changing ram_bank to {}", val);
                         self.memory_mode = 0;
                         self.ram_bank = val as usize & 0b11;
                     } else if val >= 0x8 {
+                        println!("setting rtc reg to  {}", val);
                         self.memory_mode = 1;
                     }
                 }
@@ -281,16 +293,22 @@ impl MemoryUnit {
                         }
                     }
                 }
-                CartType::Mbc3 => {}
+                CartType::Mbc3 => {
+                    println!("trying to latch");
+                }
                 _ => panic!("Bad cart type."),
             },
-            0x8000..=0x9FFF => self.vram[addr - 0x8000] = val,
+            0x8000..=0x9FFF => {
+                if self.ppu_mode != 3 || source == RequestSource::PPU {
+                    self.vram[addr - 0x8000] = val;
+                }
+            }
             0xA000..=0xBFFF => self.external_ram[addr - 0xA000] = val,
             0xC000..=0xDFFF => self.internal_ram[addr - 0xC000] = val,
             0xE000..=0xFDFF => self.internal_ram[addr - 0xE000] = val,
             0xFE00..=0xFE9F => self.oam[addr - 0xFE00] = val,
             0xFF00 => {
-                let mut p1 = self.get_memory(P1_ADDR);
+                let mut p1 = self.get_memory(P1_ADDR, SOURCE);
                 let prev_p1 = p1;
                 p1 &= 0b001111;
                 p1 |= val & 0b110000;
@@ -307,7 +325,11 @@ impl MemoryUnit {
                 }
                 p1 += new_bits;
                 if ((prev_p1 | p1) - p1) & 0xF != 0 {
-                    self.write_memory(INT_FLAG_ADDR, self.get_memory(INT_FLAG_ADDR) | (1 << 4));
+                    self.write_memory(
+                        INT_FLAG_ADDR,
+                        self.get_memory(INT_FLAG_ADDR, SOURCE) | (1 << 4),
+                        SOURCE,
+                    );
                 }
                 self.io_registers[addr - 0xFF00] = p1;
             }
@@ -343,8 +365,8 @@ impl MemoryUnit {
             0xF..=0x13 => CartType::Mbc3,
             _ => CartType::Uninitialized,
         };
-        self.available_rom_banks = 1 << (self.get_memory(ROM_BANK_ADDR) + 1);
-        self.available_ram_banks = match self.get_memory(RAM_BANK_ADDR) {
+        self.available_rom_banks = 1 << (self.get_memory(ROM_BANK_ADDR, SOURCE) + 1);
+        self.available_ram_banks = match self.get_memory(RAM_BANK_ADDR, SOURCE) {
             0 => 0,
             2 => 1,
             3 => 4,
@@ -410,20 +432,6 @@ impl MemoryUnit {
             .try_into()
             .expect("weird length error?")
     }
-    // fn get_save_header(&self) -> [u8; 9] {
-    //     [
-    //         self.memory_mode,
-    //         self.rom_bank,
-    //         self.ram_bank,
-    //         self.mbc1_0_bank,
-    //         self.mbc1_5_bit_reg,
-    //         self.mbc1_2_bit_reg,
-    //         self.ram_enable,
-    //         self.in_boot_rom,
-    //         self.dma_cycles,
-    //         self.interrupt_enable,
-    //     ]
-    // }
 }
 impl GameBoyEmulator {
     pub fn save_game(&self, path: &PathBuf) {

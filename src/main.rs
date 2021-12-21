@@ -1,5 +1,3 @@
-use std::env;
-
 mod apu;
 mod cpu;
 mod emulator;
@@ -12,7 +10,6 @@ mod timing;
 const ADVANCE_CYCLES: u32 = 4;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
     let mut em = emulator::GameBoyEmulator::new();
     let res = rfd::Dialog::pick_file().open();
     if res.len() == 1 {

@@ -1,11 +1,15 @@
 use crate::emulator::GameBoyEmulator;
+use crate::emulator::RequestSource;
 use sdl2::event::Event;
+use sdl2::event::WindowEvent;
 use sdl2::keyboard::Scancode;
 use sdl2::EventPump;
 
 const P1_ADDR: usize = 0xFF00;
 const INT_FLAG_ADDR: usize = 0xFF0F;
-
+const SOURCE: RequestSource = RequestSource::EPU;
+const WINDOW_WIDTH: f32 = 160.0;
+const WINDOW_HEIGHT: f32 = 144.0;
 pub struct EventProcessingUnit {
     new_directional_presses: u8,
     new_action_presses: u8,
@@ -30,6 +34,7 @@ impl GameBoyEmulator {
         let state = self.epu.event_pump.keyboard_state();
         let mut save = false;
         let mut open = false;
+        self.cpu.printing = false;
         for code in state.pressed_scancodes() {
             match code {
                 Scancode::Z => self.epu.new_action_presses &= 0b1110,
@@ -42,12 +47,13 @@ impl GameBoyEmulator {
                 Scancode::Down => self.epu.new_directional_presses &= 0b0111,
                 Scancode::Num1 => save = true,
                 Scancode::Num2 => open = true,
+                Scancode::Q => self.cpu.printing = true,
                 _ => {}
             }
         }
         self.mem_unit.directional_presses = self.epu.new_directional_presses;
         self.mem_unit.action_presses = self.epu.new_action_presses;
-        let mut p1 = self.mem_unit.get_memory(P1_ADDR);
+        let mut p1 = self.mem_unit.get_memory(P1_ADDR, SOURCE);
         let prev_p1 = p1;
         self.mem_unit.directional_presses = self.epu.new_directional_presses;
         self.mem_unit.action_presses = self.epu.new_action_presses;
@@ -67,10 +73,11 @@ impl GameBoyEmulator {
         if ((prev_p1 | p1) - p1) & 0xF != 0 {
             self.mem_unit.write_memory(
                 INT_FLAG_ADDR,
-                self.mem_unit.get_memory(INT_FLAG_ADDR) | (1 << 4),
+                self.mem_unit.get_memory(INT_FLAG_ADDR, SOURCE) | (1 << 4),
+                SOURCE,
             );
         }
-        self.mem_unit.write_memory(P1_ADDR, p1);
+        self.mem_unit.write_memory(P1_ADDR, p1, SOURCE);
 
         for event in self.epu.event_pump.poll_iter() {
             match event {
@@ -79,6 +86,15 @@ impl GameBoyEmulator {
                     scancode: Some(Scancode::Escape),
                     ..
                 } => self.running = false,
+                Event::Window {
+                    win_event: WindowEvent::Resized(width, height),
+                    ..
+                } => {
+                    self.pdu.width = width as usize;
+                    self.pdu.height = height as usize;
+                    self.pdu.height_scale_factor = (WINDOW_HEIGHT - 1.0) / (height - 1) as f32;
+                    self.pdu.width_scale_factor = (WINDOW_WIDTH - 1.0) / (width - 1) as f32;
+                }
                 _ => {}
             }
         }

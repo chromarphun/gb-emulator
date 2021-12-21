@@ -12,12 +12,19 @@ const COLOR_MAP: [Color; 5] = [
     Color::RGB(255, 255, 255),
 ];
 
+const WINDOW_WIDTH: usize = 160;
+const WINDOW_HEIGHT: usize = 144;
+
 pub struct PictureDisplayUnit {
-    canvas: Canvas<Window>,
+    pub canvas: Canvas<Window>,
+    pub height: usize,
+    pub width: usize,
     point_vecs: [Vec<Point>; 4],
     row: usize,
     ready: bool,
     draw_color: usize,
+    pub height_scale_factor: f32,
+    pub width_scale_factor: f32,
 }
 
 impl PictureDisplayUnit {
@@ -34,10 +41,14 @@ impl PictureDisplayUnit {
 
         PictureDisplayUnit {
             canvas,
+            height: WINDOW_HEIGHT,
+            width: WINDOW_WIDTH,
             point_vecs,
             row,
             ready,
             draw_color,
+            height_scale_factor: 1.0,
+            width_scale_factor: 1.0,
         }
     }
 }
@@ -46,9 +57,14 @@ impl GameBoyEmulator {
     pub fn pdu_advance(&mut self) {
         if self.get_mode() == 1 {
             if self.pdu.ready {
-                if self.pdu.row < 144 {
-                    for column in 0..160 {
-                        self.pdu.point_vecs[self.frame[self.pdu.row][column] as usize]
+                if self.pdu.row < self.pdu.height {
+                    let row_samp =
+                        (self.pdu.row as f32 * self.pdu.height_scale_factor).round() as usize;
+                    for column in 0..self.pdu.width {
+                        let column_samp =
+                            (column as f32 * self.pdu.width_scale_factor).round() as usize;
+                        let color_choice = self.frame[row_samp][column_samp];
+                        self.pdu.point_vecs[color_choice as usize]
                             .push(Point::new(column as i32, self.pdu.row as i32));
                     }
                     self.pdu.row += 1;

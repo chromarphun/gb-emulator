@@ -1,3 +1,4 @@
+use crate::emulator::RequestSource;
 use crate::ADVANCE_CYCLES;
 use serde::{Deserialize, Serialize};
 use std::cmp;
@@ -42,6 +43,7 @@ const WX_ADDR: usize = 0xFF4B;
 const INT_FLAG_ADDR: usize = 0xFF0F;
 const OAM_START_ADDR: usize = 0xFE00;
 const VRAM_START_ADDR: usize = 0x8000;
+const SOURCE: RequestSource = RequestSource::PPU;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PictureProcessingUnit {
@@ -104,19 +106,19 @@ impl PictureProcessingUnit {
 
 impl GameBoyEmulator {
     fn get_bg_tile_map_flag(&self) -> u8 {
-        (self.mem_unit.get_memory(LCDC_ADDR) >> 3) & 1
+        (self.mem_unit.get_memory(LCDC_ADDR, SOURCE) >> 3) & 1
     }
     fn get_win_tile_map_flag(&self) -> u8 {
-        (self.mem_unit.get_memory(LCDC_ADDR) >> 6) & 1
+        (self.mem_unit.get_memory(LCDC_ADDR, SOURCE) >> 6) & 1
     }
     fn get_tile_data_flag(&self) -> u8 {
-        (self.mem_unit.get_memory(LCDC_ADDR) >> 4) & 1
+        (self.mem_unit.get_memory(LCDC_ADDR, SOURCE) >> 4) & 1
     }
     fn get_win_enable_flag(&self) -> u8 {
-        (self.mem_unit.get_memory(LCDC_ADDR) >> 5) & 1
+        (self.mem_unit.get_memory(LCDC_ADDR, SOURCE) >> 5) & 1
     }
     fn get_obj_size(&self) -> u8 {
-        if ((self.mem_unit.get_memory(LCDC_ADDR) >> 2) & 1) == 1 {
+        if ((self.mem_unit.get_memory(LCDC_ADDR, SOURCE) >> 2) & 1) == 1 {
             16
         } else {
             8
@@ -124,56 +126,71 @@ impl GameBoyEmulator {
     }
 
     fn get_sprite_enable_flag(&self) -> u8 {
-        (self.mem_unit.get_memory(LCDC_ADDR) >> 1) & 1
+        (self.mem_unit.get_memory(LCDC_ADDR, SOURCE) >> 1) & 1
     }
     fn get_bg_window_enable(&self) -> u8 {
-        self.mem_unit.get_memory(LCDC_ADDR) & 1
+        self.mem_unit.get_memory(LCDC_ADDR, SOURCE) & 1
     }
     fn get_ppu_enable(&self) -> u8 {
-        (self.mem_unit.get_memory(LCDC_ADDR) >> 7) & 1
+        (self.mem_unit.get_memory(LCDC_ADDR, SOURCE) >> 7) & 1
     }
     fn get_stat_lyc_lc_int_flag(&self) -> u8 {
-        (self.mem_unit.get_memory(STAT_ADDR) >> 6) & 1
+        (self.mem_unit.get_memory(STAT_ADDR, SOURCE) >> 6) & 1
     }
     fn get_stat_oam_int_flag(&self) -> u8 {
-        (self.mem_unit.get_memory(STAT_ADDR) >> 5) & 1
+        (self.mem_unit.get_memory(STAT_ADDR, SOURCE) >> 5) & 1
     }
     fn get_stat_vblank_int_flag(&self) -> u8 {
-        (self.mem_unit.get_memory(STAT_ADDR) >> 4) & 1
+        (self.mem_unit.get_memory(STAT_ADDR, SOURCE) >> 4) & 1
     }
     fn get_stat_hblank_int_flag(&self) -> u8 {
-        (self.mem_unit.get_memory(STAT_ADDR) >> 3) & 1
+        (self.mem_unit.get_memory(STAT_ADDR, SOURCE) >> 3) & 1
     }
     pub fn get_mode(&self) -> u8 {
-        self.mem_unit.get_memory(STAT_ADDR) & 0b11
+        self.mem_unit.get_memory(STAT_ADDR, SOURCE) & 0b11
     }
     fn set_mode(&mut self, mode: u8) {
-        self.mem_unit
-            .write_memory(STAT_ADDR, self.mem_unit.get_memory(STAT_ADDR) & 0b1111100);
-        self.mem_unit
-            .write_memory(STAT_ADDR, self.mem_unit.get_memory(STAT_ADDR) | mode);
+        self.mem_unit.write_memory(
+            STAT_ADDR,
+            self.mem_unit.get_memory(STAT_ADDR, SOURCE) & 0b1111100,
+            SOURCE,
+        );
+        self.mem_unit.write_memory(
+            STAT_ADDR,
+            self.mem_unit.get_memory(STAT_ADDR, SOURCE) | mode,
+            SOURCE,
+        );
     }
     fn set_stat_interrupt(&mut self) {
         self.mem_unit.write_memory(
             INT_FLAG_ADDR,
-            self.mem_unit.get_memory(INT_FLAG_ADDR) | 0b00010,
+            self.mem_unit.get_memory(INT_FLAG_ADDR, SOURCE) | 0b00010,
+            SOURCE,
         );
     }
     fn set_stat_lyc_lc_flag(&mut self) {
-        self.mem_unit
-            .write_memory(STAT_ADDR, self.mem_unit.get_memory(STAT_ADDR) | 0b0000100);
+        self.mem_unit.write_memory(
+            STAT_ADDR,
+            self.mem_unit.get_memory(STAT_ADDR, SOURCE) | 0b0000100,
+            SOURCE,
+        );
     }
     fn reset_stat_lyc_lc_flag(&mut self) {
-        self.mem_unit
-            .write_memory(STAT_ADDR, self.mem_unit.get_memory(STAT_ADDR) & 0b1111011);
+        self.mem_unit.write_memory(
+            STAT_ADDR,
+            self.mem_unit.get_memory(STAT_ADDR, SOURCE) & 0b1111011,
+            SOURCE,
+        );
     }
     fn set_vblank_interrupt(&mut self) {
-        self.mem_unit
-            .write_memory(INT_FLAG_ADDR, self.mem_unit.get_memory(INT_FLAG_ADDR) | 1);
+        self.mem_unit.write_memory(
+            INT_FLAG_ADDR,
+            self.mem_unit.get_memory(INT_FLAG_ADDR, SOURCE) | 1,
+            SOURCE,
+        );
     }
     pub fn ppu_advance(&mut self) {
         let mode = self.get_mode();
-
         match mode {
             0x0 => self.hblank(),
             0x1 => self.vblank(),
@@ -181,11 +198,15 @@ impl GameBoyEmulator {
             0x3 => self.drawing_tiles(),
             _ => {}
         }
+        if self.get_ppu_enable() == 0 {
+            self.mem_unit.ppu_mode = 1;
+        }
     }
 
     fn oam_search(&mut self) {
         if self.ppu.starting {
             self.set_mode(2);
+            self.mem_unit.ppu_mode = 2;
             if self.get_stat_oam_int_flag() == 1 {
                 self.set_stat_interrupt()
             }
@@ -195,22 +216,23 @@ impl GameBoyEmulator {
             self.ppu.cycle_count += ADVANCE_CYCLES;
             self.ppu.starting = false;
         } else {
-            let row = self.mem_unit.get_memory(LY_ADDR) as usize;
+            let row = self.mem_unit.get_memory(LY_ADDR, SOURCE) as usize;
             if self.ppu.current_sprite_search < 40 {
                 'sprite_loop: for i in
                     self.ppu.current_sprite_search..(self.ppu.current_sprite_search + 5)
                 {
                     let y_pos = self
                         .mem_unit
-                        .get_memory(OAM_START_ADDR + i as usize * BYTES_PER_OAM_ENTRY);
+                        .get_memory(OAM_START_ADDR + i as usize * BYTES_PER_OAM_ENTRY, SOURCE);
                     if ((row + 16) as u8 >= y_pos)
                         && (((row + 16) as u8) < y_pos + self.get_obj_size())
                     {
                         let mut poss_sprite = [0u8; 4];
                         for j in 0..BYTES_PER_OAM_ENTRY {
-                            poss_sprite[j] = self
-                                .mem_unit
-                                .get_memory(OAM_START_ADDR + i as usize * BYTES_PER_OAM_ENTRY + j);
+                            poss_sprite[j] = self.mem_unit.get_memory(
+                                OAM_START_ADDR + i as usize * BYTES_PER_OAM_ENTRY + j,
+                                SOURCE,
+                            );
                         }
                         self.ppu.possible_sprites.push(poss_sprite);
                         self.ppu.sprite_num += 1;
@@ -226,6 +248,7 @@ impl GameBoyEmulator {
                 self.ppu.cycle_count += ADVANCE_CYCLES;
                 if self.ppu.cycle_count == OAM_SCAN_DOTS {
                     self.set_mode(3);
+                    self.mem_unit.ppu_mode = 3;
                     self.ppu.cycle_count = 0;
                     self.ppu.starting = true;
                 }
@@ -234,22 +257,22 @@ impl GameBoyEmulator {
     }
 
     fn drawing_tiles(&mut self) {
-        let row = self.mem_unit.get_memory(LY_ADDR) as usize;
+        let row = self.mem_unit.get_memory(LY_ADDR, SOURCE) as usize;
         if self.ppu.starting {
-            let wx = self.mem_unit.get_memory(WX_ADDR) as usize;
-            let wy = self.mem_unit.get_memory(WY_ADDR) as usize;
+            let wx = self.mem_unit.get_memory(WX_ADDR, SOURCE) as usize;
+            let wy = self.mem_unit.get_memory(WY_ADDR, SOURCE) as usize;
             self.ppu.window_row_activated =
                 wy <= row && self.get_win_enable_flag() == 1 && wx > 0 && wx < 144;
             self.ppu.draw_window = self.ppu.window_row_activated && wx < 8;
-            let bgp = self.mem_unit.get_memory(BGP_ADDR) as usize;
+            let bgp = self.mem_unit.get_memory(BGP_ADDR, SOURCE) as usize;
             self.ppu.color_indexes = [
                 (bgp >> 0) & 0b11,
                 (bgp >> 2) & 0b11,
                 (bgp >> 4) & 0b11,
                 (bgp >> 6) & 0b11,
             ];
-            let scx = self.mem_unit.get_memory(SCX_ADDR) as usize;
-            let scy = self.mem_unit.get_memory(SCY_ADDR) as usize;
+            let scx = self.mem_unit.get_memory(SCX_ADDR, SOURCE) as usize;
+            let scy = self.mem_unit.get_memory(SCY_ADDR, SOURCE) as usize;
 
             self.ppu.bg_tilemap_start = if self.get_bg_tile_map_flag() == 0 {
                 0x9800
@@ -309,12 +332,12 @@ impl GameBoyEmulator {
                     tilemap_row_start + (tiles_within_row_start + self.ppu.tile_num as usize) % 32;
                 let absolute_tile_index = if tile_data_flag == 1 {
                     self.mem_unit
-                        .get_memory(tilemap_start + tile_map_index as usize)
+                        .get_memory(tilemap_start + tile_map_index as usize, SOURCE)
                         as usize
                 } else {
                     let initial_index = self
                         .mem_unit
-                        .get_memory(tilemap_start + tile_map_index as usize)
+                        .get_memory(tilemap_start + tile_map_index as usize, SOURCE)
                         as usize;
                     if initial_index < VRAM_BLOCK_SIZE {
                         initial_index + 2 * VRAM_BLOCK_SIZE
@@ -326,10 +349,10 @@ impl GameBoyEmulator {
                 + row_within_tile * BYTES_PER_TILE_ROW; //getting to the row
                 let least_sig_byte = self
                     .mem_unit
-                    .get_memory(VRAM_START_ADDR + tile_data_index as usize);
+                    .get_memory(VRAM_START_ADDR + tile_data_index as usize, SOURCE);
                 let most_sig_byte = self
                     .mem_unit
-                    .get_memory(VRAM_START_ADDR + (tile_data_index + 1) as usize);
+                    .get_memory(VRAM_START_ADDR + (tile_data_index + 1) as usize, SOURCE);
 
                 'pixel_loop: for pixel in self.ppu.px_within_row..8 {
                     let bgp_index = ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1) << 1)
@@ -341,7 +364,7 @@ impl GameBoyEmulator {
                     if self.ppu.column == 160 {
                         break 'pixel_loop;
                     }
-                    if (self.ppu.column + 7 == self.mem_unit.get_memory(WX_ADDR) as usize)
+                    if (self.ppu.column + 7 == self.mem_unit.get_memory(WX_ADDR, SOURCE) as usize)
                         && self.ppu.window_row_activated
                     {
                         self.ppu.tile_num = -1;
@@ -375,16 +398,17 @@ impl GameBoyEmulator {
                     };
                     let tile_data_index =
                         tile_map_index as usize * BYTES_PER_TILE + row_within * BYTES_PER_TILE_ROW;
-                    let least_sig_byte =
-                        self.mem_unit.get_memory(VRAM_START_ADDR + tile_data_index);
+                    let least_sig_byte = self
+                        .mem_unit
+                        .get_memory(VRAM_START_ADDR + tile_data_index, SOURCE);
                     let most_sig_byte = self
                         .mem_unit
-                        .get_memory(VRAM_START_ADDR + (tile_data_index + 1));
+                        .get_memory(VRAM_START_ADDR + (tile_data_index + 1), SOURCE);
 
                     let palette = if (sprite[OAM_ATTRIBUTE_INDEX] >> 4) & 1 == 0 {
-                        self.mem_unit.get_memory(OBP0_ADDR) as usize
+                        self.mem_unit.get_memory(OBP0_ADDR, SOURCE) as usize
                     } else {
-                        self.mem_unit.get_memory(OBP1_ADDR) as usize
+                        self.mem_unit.get_memory(OBP1_ADDR, SOURCE) as usize
                     };
                     let color_indexes: [usize; 4] = [
                         (palette >> 0) & 0b11,
@@ -408,7 +432,7 @@ impl GameBoyEmulator {
                                 as usize;
                             let draw_color = color_indexes[color_index] as u8;
                             if (x_start < self.ppu.x_precendence[x as usize]) //no obj with priority 
-                                & (draw_color != 0)
+                                & (color_index != 0)
                             // not transparent
                             {
                                 self.ppu.x_precendence[x as usize] = x_start;
@@ -428,6 +452,7 @@ impl GameBoyEmulator {
                         self.ppu.cycle_count = 0;
                         self.ppu.starting = true;
                         self.set_mode(0);
+                        self.mem_unit.ppu_mode = 0;
                     }
                 }
             }
@@ -436,9 +461,14 @@ impl GameBoyEmulator {
 
     fn hblank(&mut self) {
         if self.ppu.starting {
-            self.mem_unit
-                .write_memory(LY_ADDR, self.mem_unit.get_memory(LY_ADDR) + 1);
-            if self.mem_unit.get_memory(LYC_ADDR) == self.mem_unit.get_memory(LY_ADDR) {
+            self.mem_unit.write_memory(
+                LY_ADDR,
+                self.mem_unit.get_memory(LY_ADDR, SOURCE) + 1,
+                SOURCE,
+            );
+            if self.mem_unit.get_memory(LYC_ADDR, SOURCE)
+                == self.mem_unit.get_memory(LY_ADDR, SOURCE)
+            {
                 self.set_stat_lyc_lc_flag();
                 if self.get_stat_lyc_lc_int_flag() == 1 {
                     self.set_stat_interrupt();
@@ -459,12 +489,13 @@ impl GameBoyEmulator {
             if self.ppu.cycle_count == HBLANK_DOTS {
                 self.ppu.cycle_count = 0;
                 self.ppu.starting = true;
-                let new_mode = if self.mem_unit.get_memory(LY_ADDR) == 144 {
+                let new_mode = if self.mem_unit.get_memory(LY_ADDR, SOURCE) == 144 {
                     1
                 } else {
                     2
                 };
                 self.set_mode(new_mode);
+                self.mem_unit.ppu_mode = new_mode;
             }
         }
     }
@@ -485,9 +516,14 @@ impl GameBoyEmulator {
         self.ppu.cycle_count += ADVANCE_CYCLES;
         if self.ppu.cycle_count == ROW_DOTS {
             self.ppu.cycle_count = 0;
-            self.mem_unit
-                .write_memory(LY_ADDR, self.mem_unit.get_memory(LY_ADDR) + 1);
-            if self.mem_unit.get_memory(LYC_ADDR) == self.mem_unit.get_memory(LY_ADDR) {
+            self.mem_unit.write_memory(
+                LY_ADDR,
+                self.mem_unit.get_memory(LY_ADDR, SOURCE) + 1,
+                SOURCE,
+            );
+            if self.mem_unit.get_memory(LYC_ADDR, SOURCE)
+                == self.mem_unit.get_memory(LY_ADDR, SOURCE)
+            {
                 self.set_stat_lyc_lc_flag();
                 if self.get_stat_lyc_lc_int_flag() == 1 {
                     self.set_stat_interrupt();
@@ -495,10 +531,11 @@ impl GameBoyEmulator {
             } else {
                 self.reset_stat_lyc_lc_flag();
             }
-            if self.mem_unit.get_memory(LY_ADDR) == 154 {
-                self.mem_unit.write_memory(LY_ADDR, 0);
+            if self.mem_unit.get_memory(LY_ADDR, SOURCE) == 154 {
+                self.mem_unit.write_memory(LY_ADDR, 0, SOURCE);
                 self.ppu.starting = true;
                 self.set_mode(2);
+                self.mem_unit.ppu_mode = 2;
             }
         }
     }

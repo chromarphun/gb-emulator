@@ -15,11 +15,20 @@ const CYCLES_PER_SECOND: u32 = 4_194_304;
 const CYCLES_PER_PERIOD: u32 = CYCLES_PER_SECOND / PERIODS_PER_SECOND;
 pub const ADVANCE_CYCLES: u32 = 4;
 const ADVANCES_PER_PERIOD: u32 = CYCLES_PER_PERIOD / ADVANCE_CYCLES;
-const WINDOW_WIDTH: usize = 160;
-const WINDOW_HEIGHT: usize = 144;
+const WINDOW_WIDTH: u32 = 160;
+const WINDOW_HEIGHT: u32 = 144;
 const SAMPLES_PER_SECOND: u32 = 44100;
 pub const CYCLES_PER_SAMPLE: u32 = CYCLES_PER_SECOND / SAMPLES_PER_SECOND;
 
+#[derive(PartialEq)]
+pub enum RequestSource {
+    APU,
+    CPU,
+    EPU,
+    MAU,
+    PPU,
+    Timer,
+}
 pub struct GameBoyEmulator {
     pub cpu: CentralProcessingUnit,
     pub mem_unit: MemoryUnit,
@@ -39,16 +48,17 @@ impl GameBoyEmulator {
         let sdl_context = sdl2::init().unwrap();
         let video_subsystem = sdl_context.video().unwrap();
         let audio_subsystem = sdl_context.audio().unwrap();
-        let window = video_subsystem
-            .window(
-                "Gameboy Emulator",
-                WINDOW_WIDTH as u32,
-                WINDOW_HEIGHT as u32,
-            )
+        let mut window = video_subsystem
+            .window("Gameboy Emulator", WINDOW_WIDTH, WINDOW_HEIGHT)
             .position_centered()
+            .resizable()
+            .allow_highdpi()
             .build()
             .unwrap();
-        let canvas = window.into_canvas().build().unwrap();
+        window
+            .set_minimum_size(WINDOW_WIDTH, WINDOW_HEIGHT)
+            .unwrap();
+        let mut canvas = window.into_canvas().build().unwrap();
         let event_pump = sdl_context.event_pump().unwrap();
         GameBoyEmulator {
             cpu: CentralProcessingUnit::new(),
@@ -84,6 +94,7 @@ impl GameBoyEmulator {
                 self.mem_unit.dma_tick();
             }
             self.event_check();
+            println!("{}", work_period.saturating_sub(now.elapsed()).as_micros());
             spin_sleep::sleep(work_period.saturating_sub(now.elapsed()));
         }
     }
