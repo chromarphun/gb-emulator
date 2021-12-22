@@ -14,6 +14,7 @@ const COLOR_MAP: [Color; 5] = [
 
 const WINDOW_WIDTH: usize = 160;
 const WINDOW_HEIGHT: usize = 144;
+const VBLANK_DOTS: usize = 4560;
 
 pub struct PictureDisplayUnit {
     pub canvas: Canvas<Window>,
@@ -23,8 +24,7 @@ pub struct PictureDisplayUnit {
     row: usize,
     ready: bool,
     draw_color: usize,
-    pub height_scale_factor: f32,
-    pub width_scale_factor: f32,
+    pub sample_map: Vec<(usize, usize)>,
 }
 
 impl PictureDisplayUnit {
@@ -38,17 +38,21 @@ impl PictureDisplayUnit {
         let row = 0;
         let ready = true;
         let draw_color = 0;
-
+        let mut sample_map = Vec::new();
+        for i in 0..WINDOW_HEIGHT {
+            for j in 0..WINDOW_WIDTH {
+                sample_map.push((i, j));
+            }
+        }
         PictureDisplayUnit {
             canvas,
-            height: WINDOW_HEIGHT,
-            width: WINDOW_WIDTH,
+            height: WINDOW_HEIGHT as usize,
+            width: WINDOW_WIDTH as usize,
             point_vecs,
             row,
             ready,
             draw_color,
-            height_scale_factor: 1.0,
-            width_scale_factor: 1.0,
+            sample_map,
         }
     }
 }
@@ -58,12 +62,10 @@ impl GameBoyEmulator {
         if self.get_mode() == 1 {
             if self.pdu.ready {
                 if self.pdu.row < self.pdu.height {
-                    let row_samp =
-                        (self.pdu.row as f32 * self.pdu.height_scale_factor).round() as usize;
                     for column in 0..self.pdu.width {
-                        let column_samp =
-                            (column as f32 * self.pdu.width_scale_factor).round() as usize;
-                        let color_choice = self.frame[row_samp][column_samp];
+                        let (frame_row, frame_column) =
+                            self.pdu.sample_map[self.pdu.row * self.pdu.width + column];
+                        let color_choice = self.frame[frame_row][frame_column];
                         self.pdu.point_vecs[color_choice as usize]
                             .push(Point::new(column as i32, self.pdu.row as i32));
                     }

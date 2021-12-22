@@ -5,10 +5,13 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+
+resolver="2"
 [profile.release]
 debug = true
 
 [dependencies]
+pixels = "0.8.0"
 sdl2="0.34"
 spin_sleep="1.0.0"
 rfd = "0.0.3"
