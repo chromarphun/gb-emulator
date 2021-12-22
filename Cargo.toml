@@ -12,9 +12,12 @@ debug = true
 
 [dependencies]
 pixels = "0.8.0"
-sdl2="0.34"
 spin_sleep="1.0.0"
 rfd = "0.0.3"
 serde = {version = "1.0.132", features =["derive"]}
 bincode = "1.3.3"
+
+[dependencies.sdl2]
+version = "0.34"
+features = ["raw-window-handle"]
 

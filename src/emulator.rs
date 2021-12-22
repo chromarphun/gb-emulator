@@ -1,3 +1,5 @@
+use sdl2::video::Window;
+
 use crate::apu::AudioProcessingUnit;
 use crate::cpu::CentralProcessingUnit;
 use crate::epu::EventProcessingUnit;
@@ -27,6 +29,7 @@ pub enum RequestSource {
     EPU,
     MAU,
     PPU,
+    PDU,
     Timer,
 }
 pub struct GameBoyEmulator {
@@ -41,6 +44,7 @@ pub struct GameBoyEmulator {
     pub log: File,
     pub frame: [[u8; 160]; 144],
     pub running: bool,
+    _window: Window,
 }
 
 impl GameBoyEmulator {
@@ -58,13 +62,14 @@ impl GameBoyEmulator {
         window
             .set_minimum_size(WINDOW_WIDTH, WINDOW_HEIGHT)
             .unwrap();
-        let mut canvas = window.into_canvas().build().unwrap();
+        let surface_texture = pixels::SurfaceTexture::new(WINDOW_WIDTH, WINDOW_HEIGHT, &window);
+        let pixels = pixels::Pixels::new(WINDOW_WIDTH, WINDOW_HEIGHT, surface_texture).unwrap();
         let event_pump = sdl_context.event_pump().unwrap();
         GameBoyEmulator {
             cpu: CentralProcessingUnit::new(),
             mem_unit: MemoryUnit::new(),
             ppu: PictureProcessingUnit::new(),
-            pdu: PictureDisplayUnit::new(canvas),
+            pdu: PictureDisplayUnit::new(pixels),
             epu: EventProcessingUnit::new(event_pump),
             timer: Timer::new(),
             sdl_context: sdl_context,
@@ -75,6 +80,7 @@ impl GameBoyEmulator {
             .expect("Unable to create file"),
             frame: [[0; 160]; 144],
             running: true,
+            _window: window,
         }
     }
     pub fn load_rom(&mut self, path: &PathBuf) {

@@ -90,18 +90,7 @@ impl GameBoyEmulator {
                     win_event: WindowEvent::Resized(width, height),
                     ..
                 } => {
-                    self.pdu.sample_map = Vec::new();
-                    self.pdu.width = width as usize;
-                    self.pdu.height = height as usize;
-                    let height_scale_factor = (WINDOW_HEIGHT - 1.0) / (height - 1) as f32;
-                    let width_scale_factor = (WINDOW_WIDTH - 1.0) / (width - 1) as f32;
-                    for row in 0..height {
-                        let row_samp = (row as f32 * height_scale_factor).round() as usize;
-                        for column in 0..width {
-                            let column_samp = (column as f32 * width_scale_factor).round() as usize;
-                            self.pdu.sample_map.push((row_samp, column_samp))
-                        }
-                    }
+                    self.pdu.pixels.resize_surface(width as u32, height as u32);
                 }
                 _ => {}
             }
