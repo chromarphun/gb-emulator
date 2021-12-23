@@ -97,10 +97,10 @@ impl GameBoyEmulator {
                 self.mem_unit.dma_tick();
             }
             self.event_check();
-            println!(
-                "elapsed: {}us",
-                work_period.saturating_sub(now.elapsed()).as_micros()
-            );
+            // println!(
+            //     "elapsed: {}us",
+            //     work_period.saturating_sub(now.elapsed()).as_micros()
+            // );
             spin_sleep::sleep(work_period.saturating_sub(now.elapsed()));
         }
     }

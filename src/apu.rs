@@ -3,35 +3,56 @@ use crate::emulator::GameBoyEmulator;
 use crate::emulator::RequestSource;
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
 use sdl2::AudioSubsystem;
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 const SOURCE: RequestSource = RequestSource::APU;
 
+struct SingleWriteLock<T: std::cmp::PartialEq + std::marker::Copy> {
+    rw: Arc<RwLock<T>>,
+    holding: T,
+}
+
+impl<T: std::cmp::PartialEq + std::marker::Copy> SingleWriteLock<T> {
+    fn new(rw: Arc<RwLock<T>>, initial: T) -> SingleWriteLock<T> {
+        let holding = initial;
+        SingleWriteLock { rw, holding }
+    }
+    fn set(&mut self, val: T) {
+        if val != self.holding {
+            *self.rw.write().unwrap() = val;
+        }
+    }
+}
+
 struct Channel1 {
-    frequency: Arc<Mutex<u32>>,
+    frequency: Arc<AtomicU32>,
     phase: f32,
-    enable: Arc<Mutex<bool>>,
-    volume: Arc<Mutex<u8>>,
+    enable: Arc<AtomicBool>,
+    volume: Arc<AtomicU8>,
     duty: Arc<Mutex<f32>>,
-    so1_enable: Arc<Mutex<u8>>,
+    so1_enable: Arc<AtomicU8>,
     so1_value: Arc<RwLock<f32>>,
-    so2_enable: Arc<Mutex<u8>>,
+    so2_enable: Arc<AtomicU8>,
     so2_value: Arc<RwLock<f32>>,
-    all_sound_enable: Arc<RwLock<bool>>,
+    all_sound_enable: Arc<AtomicBool>,
 }
 
 impl AudioCallback for Channel1 {
     type Channel = f32;
     fn callback(&mut self, out: &mut [f32]) {
-        let frequency = *self.frequency.lock().unwrap();
+        let frequency = self.frequency.load(Ordering::Relaxed);
         let duty = *self.duty.lock().unwrap();
         let mut right = true;
-        let so1_mod = *self.so1_enable.lock().unwrap() as f32 * (*self.so1_value.read().unwrap());
-        let so2_mod = *self.so2_enable.lock().unwrap() as f32 * (*self.so2_value.read().unwrap());
+        let so1_mod =
+            self.so1_enable.load(Ordering::Relaxed) as f32 * (*self.so1_value.read().unwrap());
+        let so2_mod =
+            self.so2_enable.load(Ordering::Relaxed) as f32 * (*self.so2_value.read().unwrap());
         let mut so_mod = so1_mod;
-        let enable = *self.enable.lock().unwrap() & *self.all_sound_enable.read().unwrap();
+        let enable =
+            self.enable.load(Ordering::Relaxed) & self.all_sound_enable.load(Ordering::Relaxed);
         for x in out.iter_mut() {
-            let vol = *self.volume.lock().unwrap();
+            let vol = self.volume.load(Ordering::Relaxed);
             if !enable || self.phase < duty {
                 *x = 0.0;
             } else {
@@ -53,52 +74,56 @@ impl AudioCallback for Channel1 {
 type Channel2 = Channel1;
 
 struct Channel3 {
-    output_level: Arc<Mutex<u8>>,
-    pointer: Arc<Mutex<usize>>,
+    output_level: Arc<AtomicU8>,
+    pointer: Arc<AtomicUsize>,
     wave_ram: Arc<Mutex<[u8; 16]>>,
     phase: f32,
-    enable: Arc<Mutex<bool>>,
-    frequency: Arc<Mutex<u32>>,
-    so1_enable: Arc<Mutex<u8>>,
+    enable: Arc<AtomicBool>,
+    frequency: Arc<AtomicU32>,
+    so1_enable: Arc<AtomicU8>,
     so1_value: Arc<RwLock<f32>>,
-    so2_enable: Arc<Mutex<u8>>,
+    so2_enable: Arc<AtomicU8>,
     so2_value: Arc<RwLock<f32>>,
-    all_sound_enable: Arc<RwLock<bool>>,
+    all_sound_enable: Arc<AtomicBool>,
 }
 
 impl AudioCallback for Channel3 {
     type Channel = f32;
     fn callback(&mut self, out: &mut [f32]) {
-        let output_shift =
-            VOLUME_SHIFT_CONVERSION[((*self.output_level.lock().unwrap() >> 5) & 0b11) as usize];
+        let output_shift = VOLUME_SHIFT_CONVERSION
+            [((self.output_level.load(Ordering::Relaxed) >> 5) & 0b11) as usize];
         let mut right = true;
-        let so1_mod = *self.so1_enable.lock().unwrap() as f32 * (*self.so1_value.read().unwrap());
-        let so2_mod = *self.so2_enable.lock().unwrap() as f32 * (*self.so2_value.read().unwrap());
+        let so1_mod =
+            self.so1_enable.load(Ordering::Relaxed) as f32 * (*self.so1_value.read().unwrap());
+        let so2_mod =
+            self.so2_enable.load(Ordering::Relaxed) as f32 * (*self.so2_value.read().unwrap());
         let mut so_mod = so1_mod;
-        let enable = *self.enable.lock().unwrap() & *self.all_sound_enable.read().unwrap();
+        let enable =
+            self.enable.load(Ordering::Relaxed) & self.all_sound_enable.load(Ordering::Relaxed);
         if !enable {
             for x in out.iter_mut() {
                 *x = 0.0;
             }
         } else {
             let mut old_phase = self.phase;
-            let mut pointer = self.pointer.lock().unwrap();
+            let mut pointer = self.pointer.load(Ordering::Relaxed);
             let wave_ram = self.wave_ram.lock().unwrap();
             for x in out.iter_mut() {
-                if *pointer % 2 == 0 {
-                    *x = ((wave_ram[*pointer / 2] >> 4) >> output_shift) as f32 * so_mod / 100.0;
+                if pointer % 2 == 0 {
+                    *x = ((wave_ram[pointer / 2] >> 4) >> output_shift) as f32 * so_mod / 100.0;
                 } else {
-                    *x = ((wave_ram[(*pointer - 1) / 2] & 0xF) >> output_shift) as f32 * so_mod
+                    *x = ((wave_ram[(pointer - 1) / 2] & 0xF) >> output_shift) as f32 * so_mod
                         / 100.0;
                 }
                 right = !right;
                 if right {
                     self.phase = (self.phase
                         + CYCLES_PER_SAMPLE as f32
-                            / ((MAX_FREQ_VAL - *self.frequency.lock().unwrap()) as f32))
+                            / ((MAX_FREQ_VAL - self.frequency.load(Ordering::Relaxed)) as f32))
                         % 1.0;
                     if self.phase < old_phase {
-                        *pointer = (*pointer + 1) % 32;
+                        pointer = (pointer + 1) % 32;
+                        self.pointer.store(pointer, Ordering::Relaxed);
                     }
                     old_phase = self.phase;
                     so_mod = so1_mod;
@@ -112,42 +137,46 @@ impl AudioCallback for Channel3 {
 
 struct Channel4 {
     phase: f32,
-    lsfr: Arc<Mutex<u16>>,
-    enable: Arc<Mutex<bool>>,
-    frequency: Arc<Mutex<u32>>,
-    width: Arc<Mutex<bool>>,
-    volume: Arc<Mutex<u8>>,
+    lsfr: Arc<AtomicU16>,
+    enable: Arc<AtomicBool>,
+    frequency: Arc<AtomicU32>,
+    width: Arc<AtomicBool>,
+    volume: Arc<AtomicU8>,
     out_1_bit: bool,
-    so1_enable: Arc<Mutex<u8>>,
+    so1_enable: Arc<AtomicU8>,
     so1_value: Arc<RwLock<f32>>,
-    so2_enable: Arc<Mutex<u8>>,
+    so2_enable: Arc<AtomicU8>,
     so2_value: Arc<RwLock<f32>>,
-    all_sound_enable: Arc<RwLock<bool>>,
+    all_sound_enable: Arc<AtomicBool>,
 }
 
 impl Channel4 {
     fn noise_lsfr(&mut self) {
-        let mut lsfr = self.lsfr.lock().unwrap();
-        let new_bit = (*lsfr & 1) ^ ((*lsfr >> 1) & 1);
-        *lsfr >>= 1;
-        *lsfr += new_bit << 14;
-        if *self.width.lock().unwrap() {
-            *lsfr &= 0b0111111;
-            *lsfr += new_bit << 6;
+        let mut lsfr = self.lsfr.load(Ordering::Relaxed);
+        let new_bit = (lsfr & 1) ^ ((lsfr >> 1) & 1);
+        lsfr >>= 1;
+        lsfr += new_bit << 14;
+        if self.width.load(Ordering::Relaxed) {
+            lsfr &= 0b0111111;
+            lsfr += new_bit << 6;
         }
-        self.out_1_bit = (*lsfr & 1) == 0;
+        self.out_1_bit = (lsfr & 1) == 0;
+        self.lsfr.store(lsfr, Ordering::Relaxed);
     }
 }
 
 impl AudioCallback for Channel4 {
     type Channel = f32;
     fn callback(&mut self, out: &mut [f32]) {
-        let enable = *self.enable.lock().unwrap() & *self.all_sound_enable.read().unwrap();
-        let volume = *self.volume.lock().unwrap();
-        let frequency = *self.frequency.lock().unwrap();
+        let enable =
+            self.enable.load(Ordering::Relaxed) & self.all_sound_enable.load(Ordering::Relaxed);
+        let volume = self.volume.load(Ordering::Relaxed);
+        let frequency = self.frequency.load(Ordering::Relaxed);
         let mut right = true;
-        let so1_mod = *self.so1_enable.lock().unwrap() as f32 * (*self.so1_value.read().unwrap());
-        let so2_mod = *self.so2_enable.lock().unwrap() as f32 * (*self.so2_value.read().unwrap());
+        let so1_mod =
+            self.so1_enable.load(Ordering::Relaxed) as f32 * (*self.so1_value.read().unwrap());
+        let so2_mod =
+            self.so2_enable.load(Ordering::Relaxed) as f32 * (*self.so2_value.read().unwrap());
         let mut so_mod = so1_mod;
         for x in out.iter_mut() {
             let old_phase = self.phase;
@@ -180,48 +209,48 @@ impl AudioCallback for Channel4 {
 
 pub struct AudioProcessingUnit {
     _audio_subsystem: AudioSubsystem,
-    channel_1_frequency: Arc<Mutex<u32>>,
-    channel_2_frequency: Arc<Mutex<u32>>,
+    channel_1_frequency: Arc<AtomicU32>,
+    channel_2_frequency: Arc<AtomicU32>,
     channel_1_sweep_count: u8,
     channel_1_sweep_enable: bool,
     cycle_count_1: u32,
     cycle_count_2: u32,
     cycle_count_3: u32,
     cycle_count_4: u32,
-    so1_level: Arc<RwLock<f32>>,
-    so2_level: Arc<RwLock<f32>>,
+    so1_level_swl: SingleWriteLock<f32>,
+    so2_level_swl: SingleWriteLock<f32>,
+    all_sound_enable: Arc<AtomicBool>,
     nr51_data: u8,
-    all_sound_enable: Arc<RwLock<bool>>,
-    channel_1_enable: Arc<Mutex<bool>>,
-    channel_1_volume: Arc<Mutex<u8>>,
+    channel_1_enable: Arc<AtomicBool>,
+    channel_1_volume: Arc<AtomicU8>,
     channel_1_volume_count: u8,
     channel_1_duty: Arc<Mutex<f32>>,
-    channel_1_so1_enable: Arc<Mutex<u8>>,
-    channel_1_so2_enable: Arc<Mutex<u8>>,
+    channel_1_so1_enable: Arc<AtomicU8>,
+    channel_1_so2_enable: Arc<AtomicU8>,
 
-    channel_2_enable: Arc<Mutex<bool>>,
-    channel_2_volume: Arc<Mutex<u8>>,
+    channel_2_enable: Arc<AtomicBool>,
+    channel_2_volume: Arc<AtomicU8>,
     channel_2_volume_count: u8,
     channel_2_duty: Arc<Mutex<f32>>,
-    channel_2_so1_enable: Arc<Mutex<u8>>,
-    channel_2_so2_enable: Arc<Mutex<u8>>,
+    channel_2_so1_enable: Arc<AtomicU8>,
+    channel_2_so2_enable: Arc<AtomicU8>,
 
-    channel_3_pointer: Arc<Mutex<usize>>,
-    channel_3_enable: Arc<Mutex<bool>>,
-    channel_3_frequency: Arc<Mutex<u32>>,
-    channel_3_output_level: Arc<Mutex<u8>>,
-    channel_3_so1_enable: Arc<Mutex<u8>>,
-    channel_3_so2_enable: Arc<Mutex<u8>>,
+    channel_3_pointer: Arc<AtomicUsize>,
+    channel_3_enable: Arc<AtomicBool>,
+    channel_3_frequency: Arc<AtomicU32>,
+    channel_3_output_level: Arc<AtomicU8>,
+    channel_3_so1_enable: Arc<AtomicU8>,
+    channel_3_so2_enable: Arc<AtomicU8>,
 
     wave_ram: Arc<Mutex<[u8; 16]>>,
     channel_4_volume_count: u8,
-    channel_4_lsfr: Arc<Mutex<u16>>,
-    channel_4_enable: Arc<Mutex<bool>>,
-    channel_4_frequency: Arc<Mutex<u32>>,
-    channel_4_width: Arc<Mutex<bool>>,
-    channel_4_volume: Arc<Mutex<u8>>,
-    channel_4_so1_enable: Arc<Mutex<u8>>,
-    channel_4_so2_enable: Arc<Mutex<u8>>,
+    channel_4_lsfr: Arc<AtomicU16>,
+    channel_4_enable: Arc<AtomicBool>,
+    channel_4_frequency: Arc<AtomicU32>,
+    channel_4_width: Arc<AtomicBool>,
+    channel_4_volume: Arc<AtomicU8>,
+    channel_4_so1_enable: Arc<AtomicU8>,
+    channel_4_so2_enable: Arc<AtomicU8>,
 
     _channel_1_device: AudioDevice<Channel1>,
     _channel_2_device: AudioDevice<Channel2>,
@@ -237,80 +266,82 @@ impl AudioProcessingUnit {
         let cycle_count_4 = 0;
         let so1_level = Arc::new(RwLock::new(0.0));
         let so2_level = Arc::new(RwLock::new(0.0));
-        let all_sound_enable = Arc::new(RwLock::new(true));
-
+        let all_sound_enable = Arc::new(AtomicBool::new(true));
         let channel_1_sweep_count = 0;
-        let channel_1_enable = Arc::new(Mutex::new(false));
-        let channel_1_volume = Arc::new(Mutex::new(0));
+        let channel_1_enable = Arc::new(AtomicBool::new(false));
+        let channel_1_volume = Arc::new(AtomicU8::new(0));
         let channel_1_volume_cb = Arc::clone(&channel_1_volume);
         let channel_1_volume_count = 0;
         let channel_1_sweep_enable = false;
-        let channel_1_frequency = Arc::new(Mutex::new(0u32));
+        let channel_1_frequency = Arc::new(AtomicU32::new(0));
         let channel_1_frequency_cb = Arc::clone(&channel_1_frequency);
         let channel_1_enable_cb = Arc::clone(&channel_1_enable);
         let channel_1_duty = Arc::new(Mutex::new(0.0));
         let channel_1_duty_cb = Arc::clone(&channel_1_duty);
-        let channel_1_so1_enable = Arc::new(Mutex::new(0));
+        let channel_1_so1_enable = Arc::new(AtomicU8::new(0));
         let channel_1_so1_enable_cb = Arc::clone(&channel_1_so1_enable);
-        let channel_1_so2_enable = Arc::new(Mutex::new(0));
+        let channel_1_so2_enable = Arc::new(AtomicU8::new(0));
         let channel_1_so2_enable_cb = Arc::clone(&channel_1_so2_enable);
         let channel_1_so1_level_cb = Arc::clone(&so1_level);
         let channel_1_so2_level_cb = Arc::clone(&so2_level);
         let channel_1_all_sound_enable_cb = Arc::clone(&all_sound_enable);
 
-        let channel_2_volume = Arc::new(Mutex::new(0));
+        let channel_2_volume = Arc::new(AtomicU8::new(0));
         let channel_2_volume_cb = Arc::clone(&channel_2_volume);
         let channel_2_volume_count = 0;
-        let channel_2_frequency = Arc::new(Mutex::new(0u32));
+        let channel_2_frequency = Arc::new(AtomicU32::new(0));
         let channel_2_frequency_cb = Arc::clone(&channel_2_frequency);
-        let channel_2_enable = Arc::new(Mutex::new(false));
+        let channel_2_enable = Arc::new(AtomicBool::new(false));
         let channel_2_enable_cb = Arc::clone(&channel_2_enable);
         let channel_2_duty = Arc::new(Mutex::new(0.0));
         let channel_2_duty_cb = Arc::clone(&channel_2_duty);
-        let channel_2_so1_enable = Arc::new(Mutex::new(0));
+        let channel_2_so1_enable = Arc::new(AtomicU8::new(0));
         let channel_2_so1_enable_cb = Arc::clone(&channel_2_so1_enable);
-        let channel_2_so2_enable = Arc::new(Mutex::new(0));
+        let channel_2_so2_enable = Arc::new(AtomicU8::new(0));
         let channel_2_so2_enable_cb = Arc::clone(&channel_2_so2_enable);
         let channel_2_so1_level_cb = Arc::clone(&so1_level);
         let channel_2_so2_level_cb = Arc::clone(&so2_level);
         let channel_2_all_sound_enable_cb = Arc::clone(&all_sound_enable);
 
-        let channel_3_pointer = Arc::new(Mutex::new(0));
+        let channel_3_pointer = Arc::new(AtomicUsize::new(0));
         let channel_3_pointer_cb = Arc::clone(&channel_3_pointer);
         let wave_ram = Arc::new(Mutex::new([0; 16]));
-        let channel_3_output_level = Arc::new(Mutex::new(0));
+        let channel_3_output_level = Arc::new(AtomicU8::new(0));
         let wave_ram_cb = Arc::clone(&wave_ram);
         let channel_3_output_level_cb = Arc::clone(&channel_3_output_level);
-        let channel_3_enable = Arc::new(Mutex::new(false));
+        let channel_3_enable = Arc::new(AtomicBool::new(false));
         let channel_3_enable_cb = Arc::clone(&channel_3_enable);
-        let channel_3_frequency = Arc::new(Mutex::new(0));
+        let channel_3_frequency = Arc::new(AtomicU32::new(0));
         let channel_3_frequency_cb = Arc::clone(&channel_3_frequency);
-        let channel_3_so1_enable = Arc::new(Mutex::new(0));
+        let channel_3_so1_enable = Arc::new(AtomicU8::new(0));
         let channel_3_so1_enable_cb = Arc::clone(&channel_3_so1_enable);
-        let channel_3_so2_enable = Arc::new(Mutex::new(0));
+        let channel_3_so2_enable = Arc::new(AtomicU8::new(0));
         let channel_3_so2_enable_cb = Arc::clone(&channel_3_so2_enable);
         let channel_3_so1_level_cb = Arc::clone(&so1_level);
         let channel_3_so2_level_cb = Arc::clone(&so2_level);
         let channel_3_all_sound_enable_cb = Arc::clone(&all_sound_enable);
 
         let channel_4_volume_count = 0;
-        let channel_4_lsfr = Arc::new(Mutex::new(0u16));
-        let channel_4_enable = Arc::new(Mutex::new(false));
-        let channel_4_frequency = Arc::new(Mutex::new(0));
-        let channel_4_width = Arc::new(Mutex::new(false));
-        let channel_4_volume = Arc::new(Mutex::new(0));
+        let channel_4_lsfr = Arc::new(AtomicU16::new(0));
+        let channel_4_enable = Arc::new(AtomicBool::new(false));
+        let channel_4_frequency = Arc::new(AtomicU32::new(0));
+        let channel_4_width = Arc::new(AtomicBool::new(false));
+        let channel_4_volume = Arc::new(AtomicU8::new(0));
         let channel_4_lsfr_cb = Arc::clone(&channel_4_lsfr);
         let channel_4_enable_cb = Arc::clone(&channel_4_enable);
         let channel_4_frequency_cb = Arc::clone(&channel_4_frequency);
         let channel_4_width_cb = Arc::clone(&channel_4_width);
         let channel_4_volume_cb = Arc::clone(&channel_4_volume);
-        let channel_4_so1_enable = Arc::new(Mutex::new(0));
+        let channel_4_so1_enable = Arc::new(AtomicU8::new(0));
         let channel_4_so1_enable_cb = Arc::clone(&channel_4_so1_enable);
-        let channel_4_so2_enable = Arc::new(Mutex::new(0));
+        let channel_4_so2_enable = Arc::new(AtomicU8::new(0));
         let channel_4_so2_enable_cb = Arc::clone(&channel_4_so2_enable);
         let channel_4_so1_level_cb = Arc::clone(&so1_level);
         let channel_4_so2_level_cb = Arc::clone(&so2_level);
         let channel_4_all_sound_enable_cb = Arc::clone(&all_sound_enable);
+
+        let so1_level_swl = SingleWriteLock::new(so1_level, 0.0);
+        let so2_level_swl = SingleWriteLock::new(so2_level, 0.0);
 
         let desired_spec = AudioSpecDesired {
             freq: Some(SAMPLES_PER_SECOND as i32),
@@ -402,10 +433,10 @@ impl AudioProcessingUnit {
             cycle_count_2,
             cycle_count_3,
             cycle_count_4,
-            so1_level,
-            so2_level,
-            nr51_data: 0,
+            so1_level_swl,
+            so2_level_swl,
             all_sound_enable,
+            nr51_data: 0,
             channel_1_sweep_count,
             channel_1_sweep_enable,
             channel_1_enable,
@@ -444,21 +475,21 @@ impl AudioProcessingUnit {
 }
 impl GameBoyEmulator {
     fn volume_envelope(&mut self, channel: u8) {
-        let (volume_reg, channel_volume_count, mut channel_volume) = match channel {
+        let (volume_reg, channel_volume_count, channel_volume) = match channel {
             1 => (
                 self.mem_unit.get_memory(NR12_ADDR, SOURCE),
                 &mut self.apu.channel_1_volume_count,
-                self.apu.channel_1_volume.lock().unwrap(),
+                &self.apu.channel_1_volume,
             ),
             2 => (
                 self.mem_unit.get_memory(NR22_ADDR, SOURCE),
                 &mut self.apu.channel_2_volume_count,
-                self.apu.channel_2_volume.lock().unwrap(),
+                &self.apu.channel_2_volume,
             ),
             4 => (
                 self.mem_unit.get_memory(NR42_ADDR, SOURCE),
                 &mut self.apu.channel_4_volume_count,
-                self.apu.channel_4_volume.lock().unwrap(),
+                &self.apu.channel_4_volume,
             ),
             _ => panic!(
                 "Wow, how did you get here? You gave a channel for volume envelope that's bad."
@@ -466,18 +497,20 @@ impl GameBoyEmulator {
         };
         let volume_time = volume_reg & 0b111;
         let vol_inc = ((volume_reg >> 3) & 1) == 1;
+        let mut channel_volume_val = channel_volume.load(Ordering::Relaxed);
         if volume_time != 0 && *channel_volume_count >= (volume_time - 1) {
-            *channel_volume = if vol_inc && *channel_volume < 15 {
-                *channel_volume + 1
-            } else if !vol_inc && *channel_volume > 0 {
-                *channel_volume - 1
+            channel_volume_val = if vol_inc && channel_volume_val < 15 {
+                channel_volume_val + 1
+            } else if !vol_inc && channel_volume_val > 0 {
+                channel_volume_val - 1
             } else {
-                *channel_volume
+                channel_volume_val
             };
             *channel_volume_count = 0;
         } else {
             *channel_volume_count = std::cmp::min(*channel_volume_count + 1, 254);
         }
+        channel_volume.store(channel_volume_val, Ordering::Relaxed);
     }
     fn sweep_channel_1(&mut self, frequency: &mut u32) {
         let (sweep_shift, sweep_inc, sweep_time) = {
@@ -495,7 +528,7 @@ impl GameBoyEmulator {
             self.apu.channel_1_sweep_count = 0;
             if *frequency >= MAX_FREQ_VAL {
                 *frequency = old_frequency;
-                *self.apu.channel_1_enable.lock().unwrap() = false;
+                self.apu.channel_1_enable.store(false, Ordering::Relaxed);
             } else {
                 self.mem_unit
                     .write_memory(NR13_ADDR, (*frequency & 0xFF) as u8, SOURCE);
@@ -511,23 +544,23 @@ impl GameBoyEmulator {
         }
     }
     fn length_unit_8(&mut self, channel: u8, length: &mut u8) {
-        let (cc_reg, length_addr, mut enable_reg, nr52_bit_mask) = match channel {
+        let (cc_reg, length_addr, enable_reg, nr52_bit_mask) = match channel {
             1 => (
                 self.mem_unit.get_memory(NR14_ADDR, SOURCE),
                 NR11_ADDR,
-                self.apu.channel_1_enable.lock().unwrap(),
+                &self.apu.channel_1_enable,
                 0b11111110,
             ),
             2 => (
                 self.mem_unit.get_memory(NR24_ADDR, SOURCE),
                 NR21_ADDR,
-                self.apu.channel_2_enable.lock().unwrap(),
+                &self.apu.channel_2_enable,
                 0b11111101,
             ),
             4 => (
                 self.mem_unit.get_memory(NR44_ADDR, SOURCE),
                 NR41_ADDR,
-                self.apu.channel_4_enable.lock().unwrap(),
+                &self.apu.channel_4_enable,
                 0b11110111,
             ),
             _ => {
@@ -537,7 +570,7 @@ impl GameBoyEmulator {
         let counter_consec = (cc_reg >> 6) & 1;
         if counter_consec == 1 {
             if *length <= 1 {
-                *enable_reg = false;
+                enable_reg.store(false, Ordering::Relaxed);
                 self.mem_unit.write_memory(
                     NR52_ADDR,
                     self.mem_unit.get_memory(NR52_ADDR, SOURCE) & nr52_bit_mask,
@@ -557,11 +590,10 @@ impl GameBoyEmulator {
 
     fn length_unit_16(&mut self, length: &mut u16) {
         let cc_reg = self.mem_unit.get_memory(NR34_ADDR, SOURCE);
-        let mut enable_reg = self.apu.channel_3_enable.lock().unwrap();
         let counter_consec = cc_reg >> 6 & 1;
         if counter_consec == 1 {
             if *length == 0 {
-                *enable_reg = false;
+                self.apu.channel_3_enable.store(false, Ordering::Relaxed);
                 self.mem_unit.write_memory(
                     NR52_ADDR,
                     self.mem_unit.get_memory(NR52_ADDR, SOURCE) & 0b11111011,
@@ -583,13 +615,17 @@ impl GameBoyEmulator {
         let initialize = (self.mem_unit.get_memory(NR14_ADDR, SOURCE) >> 7) == 1;
         let mut length = MAX_8_LENGTH - (self.mem_unit.get_memory(NR11_ADDR, SOURCE) & 0b111111);
 
-        *self.apu.channel_1_so1_enable.lock().unwrap() = self.apu.nr51_data & 1;
-        *self.apu.channel_1_so2_enable.lock().unwrap() = (self.apu.nr51_data >> 4) & 1;
+        self.apu
+            .channel_1_so1_enable
+            .store(self.apu.nr51_data & 1, Ordering::Relaxed);
+        self.apu
+            .channel_1_so2_enable
+            .store((self.apu.nr51_data >> 4) & 1, Ordering::Relaxed);
         if initialize {
             if length == 0 {
                 length = MAX_8_LENGTH;
             }
-            *self.apu.channel_1_enable.lock().unwrap() = true;
+            self.apu.channel_1_enable.store(true, Ordering::Relaxed);
             self.mem_unit.write_memory(
                 NR52_ADDR,
                 self.mem_unit.get_memory(NR52_ADDR, SOURCE) | 1,
@@ -597,8 +633,10 @@ impl GameBoyEmulator {
             );
             self.apu.channel_1_sweep_count = 0;
             self.apu.channel_1_volume_count = 0;
-            *self.apu.channel_1_volume.lock().unwrap() =
-                self.mem_unit.get_memory(NR12_ADDR, SOURCE) >> 4;
+            self.apu.channel_1_volume.store(
+                self.mem_unit.get_memory(NR12_ADDR, SOURCE) >> 4,
+                Ordering::Relaxed,
+            );
             let (sweep_shift, sweep_time) = {
                 let sweep_reg = self.mem_unit.get_memory(NR10_ADDR, SOURCE);
                 (sweep_reg & 0b11, sweep_reg >> 4)
@@ -611,7 +649,7 @@ impl GameBoyEmulator {
                 SOURCE,
             );
         }
-        if *self.apu.channel_1_enable.lock().unwrap() {
+        if self.apu.channel_1_enable.load(Ordering::Relaxed) {
             *self.apu.channel_1_duty.lock().unwrap() = DUTY_CONVERSION
                 [((self.mem_unit.get_memory(NR11_ADDR, SOURCE) >> 6) & 0b11) as usize];
             let mut channel_1_frequency =
@@ -628,28 +666,36 @@ impl GameBoyEmulator {
             if self.apu.cycle_count_1 % CYCLE_COUNT_256HZ == 0 {
                 self.length_unit_8(1, &mut length);
             }
-            *self.apu.channel_1_frequency.lock().unwrap() = channel_1_frequency;
+            self.apu
+                .channel_1_frequency
+                .store(channel_1_frequency, Ordering::Relaxed);
         }
     }
     fn channel_2_advance(&mut self) {
         let initialize = (self.mem_unit.get_memory(NR24_ADDR, SOURCE) >> 7) == 1;
         let mut length = 64 - (self.mem_unit.get_memory(NR21_ADDR, SOURCE) & 0b111111);
-        *self.apu.channel_2_so1_enable.lock().unwrap() = (self.apu.nr51_data >> 1) & 1;
-        *self.apu.channel_2_so2_enable.lock().unwrap() = (self.apu.nr51_data >> 5) & 1;
+        self.apu
+            .channel_2_so1_enable
+            .store((self.apu.nr51_data >> 1) & 1, Ordering::Relaxed);
+        self.apu
+            .channel_2_so2_enable
+            .store((self.apu.nr51_data >> 5) & 1, Ordering::Relaxed);
         if initialize {
             //println!("2 initialize!");
             if length == 0 {
                 length = MAX_8_LENGTH;
             }
-            *self.apu.channel_2_enable.lock().unwrap() = true;
+            self.apu.channel_2_enable.store(true, Ordering::Relaxed);
             self.mem_unit.write_memory(
                 NR52_ADDR,
                 self.mem_unit.get_memory(NR52_ADDR, SOURCE) | 0b10,
                 SOURCE,
             );
             self.apu.channel_2_volume_count = 0;
-            *self.apu.channel_2_volume.lock().unwrap() =
-                self.mem_unit.get_memory(NR22_ADDR, SOURCE) >> 4;
+            self.apu.channel_2_volume.store(
+                self.mem_unit.get_memory(NR22_ADDR, SOURCE) >> 4,
+                Ordering::Relaxed,
+            );
             self.mem_unit.write_memory(
                 NR24_ADDR,
                 self.mem_unit.get_memory(NR24_ADDR, SOURCE) & 0b01111111,
@@ -659,9 +705,11 @@ impl GameBoyEmulator {
         }
         *self.apu.channel_2_duty.lock().unwrap() =
             DUTY_CONVERSION[((self.mem_unit.get_memory(NR21_ADDR, SOURCE) >> 6) & 0b11) as usize];
-        *self.apu.channel_2_frequency.lock().unwrap() =
+        self.apu.channel_2_frequency.store(
             (((self.mem_unit.get_memory(NR24_ADDR, SOURCE) & 0b111) as u32) << 8)
-                + self.mem_unit.get_memory(NR23_ADDR, SOURCE) as u32;
+                + self.mem_unit.get_memory(NR23_ADDR, SOURCE) as u32,
+            Ordering::Relaxed,
+        );
 
         if self.apu.cycle_count_2 == 0 {
             self.volume_envelope(2);
@@ -675,21 +723,25 @@ impl GameBoyEmulator {
     fn channel_3_advance(&mut self) {
         let initialize = (self.mem_unit.get_memory(NR34_ADDR, SOURCE) >> 7) == 1;
         let mut length = MAX_16_LENGTH - self.mem_unit.get_memory(NR31_ADDR, SOURCE) as u16;
-        *self.apu.channel_3_so1_enable.lock().unwrap() = (self.apu.nr51_data >> 2) & 1;
-        *self.apu.channel_3_so2_enable.lock().unwrap() = (self.apu.nr51_data >> 6) & 1;
+        self.apu
+            .channel_3_so1_enable
+            .store((self.apu.nr51_data >> 2) & 1, Ordering::Relaxed);
+        self.apu
+            .channel_3_so2_enable
+            .store((self.apu.nr51_data >> 6) & 1, Ordering::Relaxed);
         if initialize {
             //println!("3 initialize!");
             if length == 0 {
                 length = MAX_16_LENGTH;
             }
             self.apu.cycle_count_3 = 0;
-            *self.apu.channel_3_pointer.lock().unwrap() = 0;
+            self.apu.channel_3_pointer.store(0, Ordering::Relaxed);
             self.mem_unit.write_memory(
                 NR34_ADDR,
                 self.mem_unit.get_memory(NR34_ADDR, SOURCE) & 0b01111111,
                 SOURCE,
             );
-            *self.apu.channel_3_enable.lock().unwrap() = true;
+            self.apu.channel_3_enable.store(true, Ordering::Relaxed);
             self.mem_unit.write_memory(
                 NR52_ADDR,
                 self.mem_unit.get_memory(NR52_ADDR, SOURCE) | 0b100,
@@ -697,14 +749,18 @@ impl GameBoyEmulator {
             );
         }
         if self.mem_unit.get_memory(NR30_ADDR, SOURCE) >> 7 == 0 {
-            *self.apu.channel_3_enable.lock().unwrap() = false;
+            self.apu.channel_3_enable.store(false, Ordering::Relaxed);
         }
         *self.apu.wave_ram.lock().unwrap() = self.mem_unit.get_wave_ram();
-        *self.apu.channel_3_output_level.lock().unwrap() =
-            self.mem_unit.get_memory(NR32_ADDR, SOURCE);
-        *self.apu.channel_3_frequency.lock().unwrap() =
+        self.apu.channel_3_output_level.store(
+            self.mem_unit.get_memory(NR32_ADDR, SOURCE),
+            Ordering::Relaxed,
+        );
+        self.apu.channel_3_frequency.store(
             (((self.mem_unit.get_memory(NR34_ADDR, SOURCE) & 0b111) as u32) << 8)
-                + self.mem_unit.get_memory(NR33_ADDR, SOURCE) as u32;
+                + self.mem_unit.get_memory(NR33_ADDR, SOURCE) as u32,
+            Ordering::Relaxed,
+        );
         if self.apu.cycle_count_3 % 16384 == 0 {
             self.length_unit_16(&mut length);
         }
@@ -712,8 +768,12 @@ impl GameBoyEmulator {
     fn channel_4_advance(&mut self) {
         let initialize = (self.mem_unit.get_memory(NR44_ADDR, SOURCE) >> 7) == 1;
         let mut length = 64 - (self.mem_unit.get_memory(NR41_ADDR, SOURCE) & 0b11111);
-        *self.apu.channel_4_so1_enable.lock().unwrap() = (self.apu.nr51_data >> 3) & 1;
-        *self.apu.channel_4_so2_enable.lock().unwrap() = (self.apu.nr51_data >> 7) & 1;
+        self.apu
+            .channel_4_so1_enable
+            .store((self.apu.nr51_data >> 3) & 1, Ordering::Relaxed);
+        self.apu
+            .channel_4_so2_enable
+            .store((self.apu.nr51_data >> 7) & 1, Ordering::Relaxed);
         if initialize {
             //println!("4 initialize!");
             if length == 0 {
@@ -725,10 +785,12 @@ impl GameBoyEmulator {
                 SOURCE,
             );
             self.apu.channel_4_volume_count = 0;
-            *self.apu.channel_4_volume.lock().unwrap() =
-                self.mem_unit.get_memory(NR42_ADDR, SOURCE) >> 4;
-            *self.apu.channel_4_lsfr.lock().unwrap() = 0x7FFF;
-            *self.apu.channel_4_enable.lock().unwrap() = true;
+            self.apu.channel_4_volume.store(
+                self.mem_unit.get_memory(NR42_ADDR, SOURCE) >> 4,
+                Ordering::Relaxed,
+            );
+            self.apu.channel_4_lsfr.store(0x7FFF, Ordering::Relaxed);
+            self.apu.channel_4_enable.store(true, Ordering::Relaxed);
             self.mem_unit.write_memory(
                 NR52_ADDR,
                 self.mem_unit.get_memory(NR52_ADDR, SOURCE) | 0b1000,
@@ -737,8 +799,10 @@ impl GameBoyEmulator {
             self.apu.cycle_count_4 = 0;
         }
         let poly_counter_reg = self.mem_unit.get_memory(NR43_ADDR, SOURCE);
-        *self.apu.channel_4_width.lock().unwrap() = ((poly_counter_reg >> 3) & 1) == 1;
-        *self.apu.channel_4_frequency.lock().unwrap() = {
+        self.apu
+            .channel_4_width
+            .store(((poly_counter_reg >> 3) & 1) == 1, Ordering::Relaxed);
+        let new_freq = {
             let shift_clock_freq = poly_counter_reg >> 4;
             let possible_ratio = poly_counter_reg & 0b111;
             let s_factor: u32 = 1 << (shift_clock_freq + 4);
@@ -748,6 +812,9 @@ impl GameBoyEmulator {
                 s_factor * possible_ratio as u32
             }
         };
+        self.apu
+            .channel_4_frequency
+            .store(new_freq, Ordering::Relaxed);
         if self.apu.cycle_count_4 == 0 {
             self.volume_envelope(4);
         }
@@ -757,13 +824,17 @@ impl GameBoyEmulator {
         }
     }
     pub fn apu_advance(&mut self) {
-        *self.apu.so1_level.write().unwrap() =
-            ((self.mem_unit.get_memory(NR50_ADDR, SOURCE) >> 4) & 0b11) as f32 / 7.0;
-        *self.apu.so2_level.write().unwrap() =
-            (self.mem_unit.get_memory(NR50_ADDR, SOURCE) & 0b11) as f32 / 7.0;
         self.apu.nr51_data = self.mem_unit.get_memory(NR51_ADDR, SOURCE);
-        *self.apu.all_sound_enable.write().unwrap() =
-            (self.mem_unit.get_memory(NR52_ADDR, SOURCE) >> 7) == 1;
+        self.apu
+            .so1_level_swl
+            .set(((self.mem_unit.get_memory(NR50_ADDR, SOURCE) >> 4) & 0b11) as f32 / 7.0);
+        self.apu
+            .so2_level_swl
+            .set((self.mem_unit.get_memory(NR50_ADDR, SOURCE) & 0b11) as f32 / 7.0);
+        self.apu.all_sound_enable.store(
+            (self.mem_unit.get_memory(NR52_ADDR, SOURCE) >> 7) == 1,
+            Ordering::Relaxed,
+        );
         self.channel_1_advance();
         self.channel_2_advance();
         self.channel_3_advance();
