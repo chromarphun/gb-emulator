@@ -1,48 +1,10 @@
+use crate::constants::*;
 use crate::emulator::RequestSource;
-use crate::ADVANCE_CYCLES;
 use serde::{Deserialize, Serialize};
 use std::cmp;
 
 use crate::emulator::GameBoyEmulator;
 
-const TILES_PER_ROW: usize = 32;
-const BG_MAP_SIZE_PX: usize = 256;
-const TILE_WIDTH: usize = 8;
-const BG_TILE_HEIGHT: usize = 8;
-const BYTES_PER_TILE: usize = 16;
-const BYTES_PER_TILE_ROW: usize = 2;
-
-const VRAM_BLOCK_SIZE: usize = 128;
-
-const OAM_SCAN_DOTS: u32 = 80;
-
-const DRAWING_DOTS: u32 = 172;
-
-const HBLANK_DOTS: u32 = 204;
-
-const ROW_DOTS: u32 = 456;
-
-const BYTES_PER_OAM_ENTRY: usize = 4;
-
-const OAM_Y_INDEX: usize = 0;
-const OAM_X_INDEX: usize = 1;
-const OAM_TILE_INDEX: usize = 2;
-const OAM_ATTRIBUTE_INDEX: usize = 3;
-
-const LCDC_ADDR: usize = 0xFF40;
-const STAT_ADDR: usize = 0xFF41;
-const SCY_ADDR: usize = 0xFF42;
-const SCX_ADDR: usize = 0xFF43;
-const LY_ADDR: usize = 0xFF44;
-const LYC_ADDR: usize = 0xFF45;
-const BGP_ADDR: usize = 0xFF47;
-const OBP0_ADDR: usize = 0xFF48;
-const OBP1_ADDR: usize = 0xFF49;
-const WY_ADDR: usize = 0xFF4A;
-const WX_ADDR: usize = 0xFF4B;
-const INT_FLAG_ADDR: usize = 0xFF0F;
-const OAM_START_ADDR: usize = 0xFE00;
-const VRAM_START_ADDR: usize = 0x8000;
 const SOURCE: RequestSource = RequestSource::PPU;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -266,7 +228,7 @@ impl GameBoyEmulator {
             self.ppu.draw_window = self.ppu.window_row_activated && wx < 8;
             let bgp = self.mem_unit.get_memory(BGP_ADDR, SOURCE) as usize;
             self.ppu.color_indexes = [
-                (bgp >> 0) & 0b11,
+                bgp & 0b11,
                 (bgp >> 2) & 0b11,
                 (bgp >> 4) & 0b11,
                 (bgp >> 6) & 0b11,
@@ -309,152 +271,147 @@ impl GameBoyEmulator {
             self.ppu.current_sprite_drawing = 0;
             self.ppu.x_precendence = vec![200u8; 160];
             self.ppu.cycle_count += ADVANCE_CYCLES;
-        } else {
-            if self.ppu.column < 160 && self.ppu.bg_win_enable {
-                let tile_data_flag = self.get_tile_data_flag();
-                let (tilemap_start, tilemap_row_start, tiles_within_row_start, row_within_tile) =
-                    if self.ppu.draw_window {
-                        (
-                            self.ppu.win_tilemap_start,
-                            self.ppu.win_tilemap_row_start,
-                            0,
-                            self.ppu.win_row_within_tile,
-                        )
-                    } else {
-                        (
-                            self.ppu.bg_tilemap_start,
-                            self.ppu.bg_tilemap_row_start,
-                            self.ppu.bg_tiles_within_row_start,
-                            self.ppu.bg_row_within_tile,
-                        )
-                    };
-                let tile_map_index =
-                    tilemap_row_start + (tiles_within_row_start + self.ppu.tile_num as usize) % 32;
-                let absolute_tile_index = if tile_data_flag == 1 {
-                    self.mem_unit
-                        .get_memory(tilemap_start + tile_map_index as usize, SOURCE)
-                        as usize
+        } else if self.ppu.column < 160 && self.ppu.bg_win_enable {
+            let tile_data_flag = self.get_tile_data_flag();
+            let (tilemap_start, tilemap_row_start, tiles_within_row_start, row_within_tile) =
+                if self.ppu.draw_window {
+                    (
+                        self.ppu.win_tilemap_start,
+                        self.ppu.win_tilemap_row_start,
+                        0,
+                        self.ppu.win_row_within_tile,
+                    )
                 } else {
-                    let initial_index = self
-                        .mem_unit
-                        .get_memory(tilemap_start + tile_map_index as usize, SOURCE)
-                        as usize;
-                    if initial_index < VRAM_BLOCK_SIZE {
-                        initial_index + 2 * VRAM_BLOCK_SIZE
-                    } else {
-                        initial_index
-                    }
+                    (
+                        self.ppu.bg_tilemap_start,
+                        self.ppu.bg_tilemap_row_start,
+                        self.ppu.bg_tiles_within_row_start,
+                        self.ppu.bg_row_within_tile,
+                    )
                 };
-                let tile_data_index = absolute_tile_index * BYTES_PER_TILE // getting to the starting byte
-                + row_within_tile * BYTES_PER_TILE_ROW; //getting to the row
-                let least_sig_byte = self
-                    .mem_unit
-                    .get_memory(VRAM_START_ADDR + tile_data_index as usize, SOURCE);
-                let most_sig_byte = self
-                    .mem_unit
-                    .get_memory(VRAM_START_ADDR + (tile_data_index + 1) as usize, SOURCE);
-
-                'pixel_loop: for pixel in self.ppu.px_within_row..8 {
-                    let bgp_index = ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1) << 1)
-                        + ((least_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1))
-                        as usize;
-                    let pixel_color = self.ppu.color_indexes[bgp_index] as u8;
-                    self.frame[row][self.ppu.column] = pixel_color;
-                    self.ppu.column += 1;
-                    if self.ppu.column == 160 {
-                        break 'pixel_loop;
-                    }
-                    if (self.ppu.column + 7 == self.mem_unit.get_memory(WX_ADDR, SOURCE) as usize)
-                        && self.ppu.window_row_activated
-                    {
-                        self.ppu.tile_num = -1;
-                        self.ppu.draw_window = true;
-                        break 'pixel_loop;
-                    }
-                    self.ppu.px_within_row = 0;
-                }
-                self.ppu.tile_num += 1;
-                self.ppu.cycle_count += ADVANCE_CYCLES;
+            let tile_map_index =
+                tilemap_row_start + (tiles_within_row_start + self.ppu.tile_num as usize) % 32;
+            let absolute_tile_index = if tile_data_flag == 1 {
+                self.mem_unit
+                    .get_memory(tilemap_start + tile_map_index as usize, SOURCE)
+                    as usize
             } else {
-                if self.ppu.current_sprite_drawing < self.ppu.sprite_num && self.ppu.obj_enable {
-                    let obj_length = self.get_obj_size();
-                    let sprite = self.ppu.possible_sprites[self.ppu.current_sprite_drawing];
-                    let x_flip = ((sprite[OAM_ATTRIBUTE_INDEX] >> 5) & 1) == 1;
-                    let y_flip = ((sprite[OAM_ATTRIBUTE_INDEX] >> 6) & 1) == 1;
-                    let row_within = if y_flip {
-                        (obj_length - 1 + sprite[OAM_Y_INDEX]) as usize - row - 16
-                    } else {
-                        (row + 16) - sprite[OAM_Y_INDEX] as usize
-                    };
-                    let bg_over_obj = (sprite[OAM_ATTRIBUTE_INDEX] >> 7) == 1;
-                    let tile_map_index = if obj_length == 16 {
-                        if row_within >= 8 {
-                            sprite[OAM_TILE_INDEX] | 0x01
-                        } else {
-                            sprite[OAM_TILE_INDEX] & 0xFE
-                        }
-                    } else {
-                        sprite[OAM_TILE_INDEX]
-                    };
-                    let tile_data_index =
-                        tile_map_index as usize * BYTES_PER_TILE + row_within * BYTES_PER_TILE_ROW;
-                    let least_sig_byte = self
-                        .mem_unit
-                        .get_memory(VRAM_START_ADDR + tile_data_index, SOURCE);
-                    let most_sig_byte = self
-                        .mem_unit
-                        .get_memory(VRAM_START_ADDR + (tile_data_index + 1), SOURCE);
-
-                    let palette = if (sprite[OAM_ATTRIBUTE_INDEX] >> 4) & 1 == 0 {
-                        self.mem_unit.get_memory(OBP0_ADDR, SOURCE) as usize
-                    } else {
-                        self.mem_unit.get_memory(OBP1_ADDR, SOURCE) as usize
-                    };
-                    let color_indexes: [usize; 4] = [
-                        (palette >> 0) & 0b11,
-                        (palette >> 2) & 0b11,
-                        (palette >> 4) & 0b11,
-                        (palette >> 6) & 0b11,
-                    ];
-                    let x_end = sprite[OAM_X_INDEX];
-                    if x_end > 0 && x_end < 168 {
-                        let x_start = cmp::max(0, x_end - 8);
-                        let mut index = TILE_WIDTH - (x_end - x_start) as usize;
-                        let obj_range = if x_flip {
-                            (x_start..x_end).rev().collect::<Vec<u8>>()
-                        } else {
-                            (x_start..x_end).collect::<Vec<u8>>()
-                        };
-                        for x in obj_range.into_iter().filter(|z| *z < 160) {
-                            let color_index = ((((most_sig_byte >> (TILE_WIDTH - index - 1)) & 1)
-                                << 1)
-                                + ((least_sig_byte >> (TILE_WIDTH - index - 1)) & 1))
-                                as usize;
-                            let draw_color = color_indexes[color_index] as u8;
-                            if (x_start < self.ppu.x_precendence[x as usize]) //no obj with priority 
-                                & (color_index != 0)
-                            // not transparent
-                            {
-                                self.ppu.x_precendence[x as usize] = x_start;
-                                if !bg_over_obj || (self.frame[row][x as usize] == 0) {
-                                    self.frame[row][x as usize] = draw_color;
-                                }
-                            }
-                            index += 1;
-                        }
-                    }
-
-                    self.ppu.current_sprite_drawing += 1;
-                    self.ppu.cycle_count += ADVANCE_CYCLES;
+                let initial_index = self
+                    .mem_unit
+                    .get_memory(tilemap_start + tile_map_index as usize, SOURCE)
+                    as usize;
+                if initial_index < VRAM_BLOCK_SIZE {
+                    initial_index + 2 * VRAM_BLOCK_SIZE
                 } else {
-                    self.ppu.cycle_count += ADVANCE_CYCLES;
-                    if self.ppu.cycle_count == DRAWING_DOTS {
-                        self.ppu.cycle_count = 0;
-                        self.ppu.starting = true;
-                        self.set_mode(0);
-                        self.mem_unit.ppu_mode = 0;
-                    }
+                    initial_index
                 }
+            };
+            let tile_data_index = absolute_tile_index * BYTES_PER_TILE // getting to the starting byte
+                + row_within_tile * BYTES_PER_TILE_ROW; //getting to the row
+            let least_sig_byte = self
+                .mem_unit
+                .get_memory(VRAM_START_ADDR + tile_data_index as usize, SOURCE);
+            let most_sig_byte = self
+                .mem_unit
+                .get_memory(VRAM_START_ADDR + (tile_data_index + 1) as usize, SOURCE);
+
+            'pixel_loop: for pixel in self.ppu.px_within_row..8 {
+                let bgp_index = ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1) << 1)
+                    + ((least_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1))
+                    as usize;
+                let pixel_color = self.ppu.color_indexes[bgp_index] as u8;
+                self.frame[row][self.ppu.column] = pixel_color;
+                self.ppu.column += 1;
+                if self.ppu.column == 160 {
+                    break 'pixel_loop;
+                }
+                if (self.ppu.column + 7 == self.mem_unit.get_memory(WX_ADDR, SOURCE) as usize)
+                    && self.ppu.window_row_activated
+                {
+                    self.ppu.tile_num = -1;
+                    self.ppu.draw_window = true;
+                    break 'pixel_loop;
+                }
+                self.ppu.px_within_row = 0;
+            }
+            self.ppu.tile_num += 1;
+            self.ppu.cycle_count += ADVANCE_CYCLES;
+        } else if self.ppu.current_sprite_drawing < self.ppu.sprite_num && self.ppu.obj_enable {
+            let obj_length = self.get_obj_size();
+            let sprite = self.ppu.possible_sprites[self.ppu.current_sprite_drawing];
+            let x_flip = ((sprite[OAM_ATTRIBUTE_INDEX] >> 5) & 1) == 1;
+            let y_flip = ((sprite[OAM_ATTRIBUTE_INDEX] >> 6) & 1) == 1;
+            let row_within = if y_flip {
+                (obj_length - 1 + sprite[OAM_Y_INDEX]) as usize - row - 16
+            } else {
+                (row + 16) - sprite[OAM_Y_INDEX] as usize
+            };
+            let bg_over_obj = (sprite[OAM_ATTRIBUTE_INDEX] >> 7) == 1;
+            let tile_map_index = if obj_length == 16 {
+                if row_within >= 8 {
+                    sprite[OAM_TILE_INDEX] | 0x01
+                } else {
+                    sprite[OAM_TILE_INDEX] & 0xFE
+                }
+            } else {
+                sprite[OAM_TILE_INDEX]
+            };
+            let tile_data_index =
+                tile_map_index as usize * BYTES_PER_TILE + row_within * BYTES_PER_TILE_ROW;
+            let least_sig_byte = self
+                .mem_unit
+                .get_memory(VRAM_START_ADDR + tile_data_index, SOURCE);
+            let most_sig_byte = self
+                .mem_unit
+                .get_memory(VRAM_START_ADDR + (tile_data_index + 1), SOURCE);
+
+            let palette = if (sprite[OAM_ATTRIBUTE_INDEX] >> 4) & 1 == 0 {
+                self.mem_unit.get_memory(OBP0_ADDR, SOURCE) as usize
+            } else {
+                self.mem_unit.get_memory(OBP1_ADDR, SOURCE) as usize
+            };
+            let color_indexes: [usize; 4] = [
+                palette & 0b11,
+                (palette >> 2) & 0b11,
+                (palette >> 4) & 0b11,
+                (palette >> 6) & 0b11,
+            ];
+            let x_end = sprite[OAM_X_INDEX];
+            if x_end > 0 && x_end < 168 {
+                let x_start = cmp::max(0, x_end - 8);
+                let mut index = TILE_WIDTH - (x_end - x_start) as usize;
+                let obj_range = if x_flip {
+                    (x_start..x_end).rev().collect::<Vec<u8>>()
+                } else {
+                    (x_start..x_end).collect::<Vec<u8>>()
+                };
+                for x in obj_range.into_iter().filter(|z| *z < 160) {
+                    let color_index = ((((most_sig_byte >> (TILE_WIDTH - index - 1)) & 1) << 1)
+                        + ((least_sig_byte >> (TILE_WIDTH - index - 1)) & 1))
+                        as usize;
+                    let draw_color = color_indexes[color_index] as u8;
+                    if (x_start < self.ppu.x_precendence[x as usize]) //no obj with priority 
+                                & (color_index != 0)
+                    // not transparent
+                    {
+                        self.ppu.x_precendence[x as usize] = x_start;
+                        if !bg_over_obj || (self.frame[row][x as usize] == 0) {
+                            self.frame[row][x as usize] = draw_color;
+                        }
+                    }
+                    index += 1;
+                }
+            }
+
+            self.ppu.current_sprite_drawing += 1;
+            self.ppu.cycle_count += ADVANCE_CYCLES;
+        } else {
+            self.ppu.cycle_count += ADVANCE_CYCLES;
+            if self.ppu.cycle_count == DRAWING_DOTS {
+                self.ppu.cycle_count = 0;
+                self.ppu.starting = true;
+                self.set_mode(0);
+                self.mem_unit.ppu_mode = 0;
             }
         }
     }

@@ -1,23 +1,10 @@
+use crate::constants::*;
 use crate::emulator::GameBoyEmulator;
 use crate::emulator::RequestSource;
 use serde::{Deserialize, Serialize};
 // use std::fs::File;
 // use std::io::prelude::*;
 
-const NUM_REG: usize = 7;
-const REG_A: usize = 0;
-const REG_B: usize = 1;
-const REG_C: usize = 2;
-const REG_D: usize = 3;
-const REG_E: usize = 4;
-const REG_H: usize = 5;
-const REG_L: usize = 6;
-const CARRY_LIMIT_16: u32 = 65535;
-const CARRY_LIMIT_8: u16 = 255;
-const INT_FLAG_ADDR: usize = 0xFF0F;
-const INT_ENABLE_ADDR: usize = 0xFFFF;
-const ADVANCE_CYCLES: u32 = 4;
-const INTERRUPT_DOTS: u32 = 20;
 const SOURCE: RequestSource = RequestSource::CPU;
 
 const FUNCTION_MAP: [fn(&mut GameBoyEmulator, u8); 256] = [
@@ -296,17 +283,22 @@ const FUNCTION_MAP: [fn(&mut GameBoyEmulator, u8); 256] = [
 ];
 
 const CYCLES_MAP: [u32; 256] = [
-    04, 12, 08, 08, 04, 04, 08, 04, 20, 08, 08, 08, 04, 04, 08, 04, 04, 12, 08, 08, 04, 04, 08, 04,
-    12, 08, 08, 08, 04, 04, 08, 04, 08, 12, 08, 08, 04, 04, 08, 04, 08, 08, 08, 08, 04, 04, 08, 04,
-    08, 12, 08, 08, 12, 12, 12, 04, 08, 08, 08, 08, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04,
-    04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04,
-    04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 08, 08, 08, 08, 08, 08, 04, 08,
-    04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04,
-    04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04,
-    04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04, 04, 04, 04, 04, 04, 04, 08, 04,
-    08, 12, 12, 16, 12, 16, 08, 16, 08, 16, 12, 04, 12, 24, 08, 16, 08, 12, 12, 00, 12, 16, 08, 16,
-    08, 16, 12, 00, 12, 00, 08, 16, 12, 12, 08, 00, 00, 16, 08, 16, 16, 04, 16, 00, 00, 00, 08, 16,
-    12, 12, 08, 04, 00, 16, 08, 16, 12, 08, 16, 04, 00, 00, 08, 16,
+    4, 12, 4, 4, 4, 4, 4, 4, 20, 4, 4, 4, 4, 4, 4, 4, // 0x0
+    4, 12, 4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, // 0x1
+    4, 12, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x2
+    4, 12, 4, 4, 12, 12, 12, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x3
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x4
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x5
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x6
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x7
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x8
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x9
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0xA
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0xB
+    4, 12, 12, 16, 12, 16, 4, 16, 4, 16, 12, 4, 12, 24, 4, 16, // 0xC
+    4, 12, 12, 0, 12, 16, 4, 16, 4, 16, 12, 0, 12, 0, 4, 16, // 0xD
+    12, 12, 4, 0, 0, 16, 4, 16, 16, 4, 16, 0, 0, 0, 4, 16, // 0xE
+    12, 12, 4, 4, 0, 16, 4, 16, 12, 4, 16, 4, 0, 0, 4, 16, // 0xF
 ];
 
 #[inline]
@@ -1392,12 +1384,10 @@ impl GameBoyEmulator {
             } else {
                 0
             }
+        } else if new_sp & 0xF <= self.cpu.sp & 0xF {
+            1
         } else {
-            if new_sp & 0xF <= self.cpu.sp & 0xF {
-                1
-            } else {
-                0
-            }
+            0
         };
 
         self.cpu.c_flag = if val >= 0 {
@@ -1406,12 +1396,10 @@ impl GameBoyEmulator {
             } else {
                 0
             }
+        } else if new_sp & 0xFF <= (self.cpu.sp & 0xFF) {
+            1
         } else {
-            if new_sp & 0xFF <= (self.cpu.sp & 0xFF) {
-                1
-            } else {
-                0
-            }
+            0
         };
         self.cpu.sp = new_sp;
 
@@ -1428,12 +1416,10 @@ impl GameBoyEmulator {
             } else {
                 0
             }
+        } else if new_hl & 0xF <= self.cpu.sp & 0xF {
+            1
         } else {
-            if new_hl & 0xF <= self.cpu.sp & 0xF {
-                1
-            } else {
-                0
-            }
+            0
         };
 
         self.cpu.c_flag = if val >= 0 {
@@ -1442,12 +1428,10 @@ impl GameBoyEmulator {
             } else {
                 0
             }
+        } else if new_hl & 0xFF <= (self.cpu.sp & 0xFF) {
+            1
         } else {
-            if new_hl & 0xFF <= (self.cpu.sp & 0xFF) {
-                1
-            } else {
-                0
-            }
+            0
         };
         let (hl_val_high, hl_val_low) = split_u16(new_hl);
         self.cpu.regs[REG_H] = hl_val_high;
@@ -1544,16 +1528,16 @@ impl GameBoyEmulator {
                 self.cpu.z_flag = if *reg == 0 { 1 } else { 0 };
             }
             2 => {
+                let bit_7 = (*reg >> 7) & 1;
                 let moved_bit = if cb_command_low_second_half {
                     //sra
-                    let bit_7 = (*reg >> 7) & 1;
+
                     let bit_0 = *reg & 1;
                     *reg >>= 1;
                     *reg += bit_7 << 7;
                     bit_0
                 } else {
                     //sla
-                    let bit_7 = (*reg >> 7) & 1;
                     *reg <<= 1;
                     bit_7
                 };
@@ -1568,16 +1552,14 @@ impl GameBoyEmulator {
                     let bit_0 = *reg & 1;
                     self.cpu.c_flag = bit_0;
                     *reg >>= 1;
-                    self.cpu.h_flag = 0;
-                    self.cpu.n_flag = 0;
                 } else {
                     //swap
                     let (high_nib, low_nib) = split_byte(*reg);
                     *reg = (low_nib << 4) + high_nib;
                     self.cpu.c_flag = 0;
-                    self.cpu.h_flag = 0;
-                    self.cpu.n_flag = 0;
                 }
+                self.cpu.h_flag = 0;
+                self.cpu.n_flag = 0;
                 self.cpu.z_flag = if *reg == 0 { 1 } else { 0 };
             }
             4..=7 => {

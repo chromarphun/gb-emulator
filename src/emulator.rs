@@ -1,6 +1,7 @@
 use sdl2::video::Window;
 
 use crate::apu::AudioProcessingUnit;
+use crate::constants::*;
 use crate::cpu::CentralProcessingUnit;
 use crate::epu::EventProcessingUnit;
 use crate::memory::MemoryUnit;
@@ -8,19 +9,8 @@ use crate::pdu::PictureDisplayUnit;
 use crate::ppu::PictureProcessingUnit;
 use crate::timing::Timer;
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::{Duration, Instant};
-
-const PERIODS_PER_SECOND: u32 = 64;
-const PERIOD_NS: u32 = 1_000_000_000 / PERIODS_PER_SECOND;
-const CYCLES_PER_SECOND: u32 = 4_194_304;
-const CYCLES_PER_PERIOD: u32 = CYCLES_PER_SECOND / PERIODS_PER_SECOND;
-pub const ADVANCE_CYCLES: u32 = 4;
-const ADVANCES_PER_PERIOD: u32 = CYCLES_PER_PERIOD / ADVANCE_CYCLES;
-const WINDOW_WIDTH: u32 = 160;
-const WINDOW_HEIGHT: u32 = 144;
-const SAMPLES_PER_SECOND: u32 = 44100;
-pub const CYCLES_PER_SAMPLE: u32 = CYCLES_PER_SECOND / SAMPLES_PER_SECOND;
 
 #[derive(PartialEq)]
 pub enum RequestSource {
@@ -53,17 +43,24 @@ impl GameBoyEmulator {
         let video_subsystem = sdl_context.video().unwrap();
         let audio_subsystem = sdl_context.audio().unwrap();
         let mut window = video_subsystem
-            .window("Gameboy Emulator", WINDOW_WIDTH, WINDOW_HEIGHT)
+            .window(
+                "Gameboy Emulator",
+                WINDOW_WIDTH as u32,
+                WINDOW_HEIGHT as u32,
+            )
             .position_centered()
             .resizable()
             .allow_highdpi()
             .build()
             .unwrap();
         window
-            .set_minimum_size(WINDOW_WIDTH, WINDOW_HEIGHT)
+            .set_minimum_size(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32)
             .unwrap();
-        let surface_texture = pixels::SurfaceTexture::new(WINDOW_WIDTH, WINDOW_HEIGHT, &window);
-        let pixels = pixels::Pixels::new(WINDOW_WIDTH, WINDOW_HEIGHT, surface_texture).unwrap();
+        let surface_texture =
+            pixels::SurfaceTexture::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32, &window);
+        let pixels =
+            pixels::Pixels::new(WINDOW_WIDTH as u32, WINDOW_HEIGHT as u32, surface_texture)
+                .unwrap();
         let event_pump = sdl_context.event_pump().unwrap();
         GameBoyEmulator {
             cpu: CentralProcessingUnit::new(),
@@ -72,7 +69,7 @@ impl GameBoyEmulator {
             pdu: PictureDisplayUnit::new(pixels),
             epu: EventProcessingUnit::new(event_pump),
             timer: Timer::new(),
-            sdl_context: sdl_context,
+            sdl_context,
             apu: AudioProcessingUnit::new(audio_subsystem),
             log: File::create(
                 "C://Users//chrom//Documents//Emulators//gb-emulator//src//commands.log",
@@ -83,7 +80,7 @@ impl GameBoyEmulator {
             _window: window,
         }
     }
-    pub fn load_rom(&mut self, path: &PathBuf) {
+    pub fn load_rom(&mut self, path: &Path) {
         self.mem_unit.load_rom(path);
     }
     pub fn run(&mut self) {
@@ -100,7 +97,10 @@ impl GameBoyEmulator {
                 self.mem_unit.dma_tick();
             }
             self.event_check();
-            println!("{}", work_period.saturating_sub(now.elapsed()).as_micros());
+            println!(
+                "elapsed: {}us",
+                work_period.saturating_sub(now.elapsed()).as_micros()
+            );
             spin_sleep::sleep(work_period.saturating_sub(now.elapsed()));
         }
     }

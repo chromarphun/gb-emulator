@@ -1,19 +1,7 @@
+use crate::constants::*;
 use crate::emulator::GameBoyEmulator;
 use crate::emulator::RequestSource;
-use crate::emulator::ADVANCE_CYCLES;
 use pixels::Pixels;
-use sdl2::pixels::Color;
-use sdl2::rect::Point;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
-
-// const COLOR_MAP: [Color; 5] = [
-//     Color::RGB(155, 188, 15),
-//     Color::RGB(139, 172, 15),
-//     Color::RGB(48, 98, 48),
-//     Color::RGB(15, 56, 15),
-//     Color::RGB(255, 255, 255),
-// ];
 
 const COLOR_MAP: [[u8; 4]; 4] = [
     [155, 188, 15, 255],
@@ -22,10 +10,8 @@ const COLOR_MAP: [[u8; 4]; 4] = [
     [15, 56, 15, 255],
 ];
 
-const WINDOW_WIDTH: usize = 160;
-const WINDOW_HEIGHT: usize = 144;
 const TOTAL_PIXELS: usize = WINDOW_HEIGHT * WINDOW_WIDTH;
-const LY_ADDR: usize = 0xFF44;
+
 const SOURCE: RequestSource = RequestSource::PDU;
 const PIXEL_LENGTH: usize = 4;
 

@@ -1,3 +1,4 @@
+use crate::constants::*;
 use crate::emulator::GameBoyEmulator;
 use crate::emulator::RequestSource;
 use sdl2::event::Event;
@@ -5,11 +6,7 @@ use sdl2::event::WindowEvent;
 use sdl2::keyboard::Scancode;
 use sdl2::EventPump;
 
-const P1_ADDR: usize = 0xFF00;
-const INT_FLAG_ADDR: usize = 0xFF0F;
 const SOURCE: RequestSource = RequestSource::EPU;
-const WINDOW_WIDTH: f32 = 160.0;
-const WINDOW_HEIGHT: f32 = 144.0;
 pub struct EventProcessingUnit {
     new_directional_presses: u8,
     new_action_presses: u8,

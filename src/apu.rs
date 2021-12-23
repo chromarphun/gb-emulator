@@ -1,42 +1,11 @@
+use crate::constants::*;
 use crate::emulator::GameBoyEmulator;
 use crate::emulator::RequestSource;
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
 use sdl2::AudioSubsystem;
 use std::sync::{Arc, Mutex, RwLock};
 
-use crate::emulator::{ADVANCE_CYCLES, CYCLES_PER_SAMPLE};
-
-const DUTY_CONVERSION: [f32; 4] = [0.125, 0.25, 0.5, 0.75];
-
-const VOLUME_SHIFT_CONVERSION: [u8; 4] = [4, 0, 1, 2];
-
 const SOURCE: RequestSource = RequestSource::APU;
-
-const NR10_ADDR: usize = 0xFF10;
-const NR11_ADDR: usize = 0xFF11;
-const NR12_ADDR: usize = 0xFF12;
-const NR13_ADDR: usize = 0xFF13;
-const NR14_ADDR: usize = 0xFF14;
-
-const NR21_ADDR: usize = 0xFF16;
-const NR22_ADDR: usize = 0xFF17;
-const NR23_ADDR: usize = 0xFF18;
-const NR24_ADDR: usize = 0xFF19;
-
-const NR30_ADDR: usize = 0xFF1A;
-const NR31_ADDR: usize = 0xFF1B;
-const NR32_ADDR: usize = 0xFF1C;
-const NR33_ADDR: usize = 0xFF1D;
-const NR34_ADDR: usize = 0xFF1E;
-
-const NR41_ADDR: usize = 0xFF20;
-const NR42_ADDR: usize = 0xFF21;
-const NR43_ADDR: usize = 0xFF22;
-const NR44_ADDR: usize = 0xFF23;
-
-const NR50_ADDR: usize = 0xFF24;
-const NR51_ADDR: usize = 0xFF25;
-const NR52_ADDR: usize = 0xFF26;
 
 struct Channel1 {
     frequency: Arc<Mutex<u32>>,
@@ -63,17 +32,16 @@ impl AudioCallback for Channel1 {
         let enable = *self.enable.lock().unwrap() & *self.all_sound_enable.read().unwrap();
         for x in out.iter_mut() {
             let vol = *self.volume.lock().unwrap();
-            if !enable {
-                *x = 0.0;
-            } else if self.phase < duty {
+            if !enable || self.phase < duty {
                 *x = 0.0;
             } else {
                 *x = (vol as f32 * so_mod) / 100.0;
             }
             right = !right;
             if right {
-                self.phase =
-                    (self.phase + (131072.0 / (2048.0 - frequency as f32)) / 44100.0) % 1.0;
+                self.phase = (self.phase
+                    + (131072.0 / ((MAX_FREQ_VAL - frequency) as f32)) / SAMPLES_PER_SECOND as f32)
+                    % 1.0;
                 so_mod = so1_mod;
             } else {
                 so_mod = so2_mod;
@@ -127,7 +95,7 @@ impl AudioCallback for Channel3 {
                 if right {
                     self.phase = (self.phase
                         + CYCLES_PER_SAMPLE as f32
-                            / (2048.0 - *self.frequency.lock().unwrap() as f32))
+                            / ((MAX_FREQ_VAL - *self.frequency.lock().unwrap()) as f32))
                         % 1.0;
                     if self.phase < old_phase {
                         *pointer = (*pointer + 1) % 32;
@@ -185,12 +153,10 @@ impl AudioCallback for Channel4 {
             let old_phase = self.phase;
             if !enable {
                 *x = 0.0;
+            } else if self.out_1_bit {
+                *x = volume as f32 * so_mod / 100.0;
             } else {
-                if self.out_1_bit {
-                    *x = volume as f32 * so_mod / 100.0;
-                } else {
-                    *x = 0.0;
-                }
+                *x = 0.0;
             }
             right = !right;
             if right {
@@ -209,8 +175,6 @@ impl AudioCallback for Channel4 {
                 so_mod = so2_mod;
             }
         }
-
-        //let phase_add = 1.0 / (frequency >> 3);
     }
 }
 
@@ -349,9 +313,9 @@ impl AudioProcessingUnit {
         let channel_4_all_sound_enable_cb = Arc::clone(&all_sound_enable);
 
         let desired_spec = AudioSpecDesired {
-            freq: Some(44100),
-            channels: Some(2), // mono
-            samples: Some(32), // default sample size
+            freq: Some(SAMPLES_PER_SECOND as i32),
+            channels: Some(2),
+            samples: Some(32),
         };
         let channel_1_device = audio_subsystem
             .open_playback(None, &desired_spec, |_spec| {
@@ -529,7 +493,7 @@ impl GameBoyEmulator {
                 *frequency - (*frequency >> sweep_shift)
             };
             self.apu.channel_1_sweep_count = 0;
-            if *frequency >= 2048 {
+            if *frequency >= MAX_FREQ_VAL {
                 *frequency = old_frequency;
                 *self.apu.channel_1_enable.lock().unwrap() = false;
             } else {
@@ -582,7 +546,8 @@ impl GameBoyEmulator {
             } else {
                 self.mem_unit.write_memory(
                     length_addr,
-                    self.mem_unit.get_memory(length_addr, SOURCE) & 0b11000000 | (64 - *length),
+                    self.mem_unit.get_memory(length_addr, SOURCE) & 0b11000000
+                        | (MAX_8_LENGTH - *length),
                     SOURCE,
                 );
                 *length -= 1;
@@ -606,7 +571,7 @@ impl GameBoyEmulator {
                 self.mem_unit.write_memory(
                     NR31_ADDR,
                     self.mem_unit.get_memory(NR31_ADDR, SOURCE) & 0b11000000
-                        | (256 - *length) as u8,
+                        | (MAX_16_LENGTH - *length) as u8,
                     SOURCE,
                 );
                 *length -= 1;
@@ -616,14 +581,13 @@ impl GameBoyEmulator {
 
     fn channel_1_advance(&mut self) {
         let initialize = (self.mem_unit.get_memory(NR14_ADDR, SOURCE) >> 7) == 1;
-        let mut length = 64 - (self.mem_unit.get_memory(NR11_ADDR, SOURCE) & 0b111111);
+        let mut length = MAX_8_LENGTH - (self.mem_unit.get_memory(NR11_ADDR, SOURCE) & 0b111111);
 
         *self.apu.channel_1_so1_enable.lock().unwrap() = self.apu.nr51_data & 1;
         *self.apu.channel_1_so2_enable.lock().unwrap() = (self.apu.nr51_data >> 4) & 1;
         if initialize {
-            println!("1 initialize!");
             if length == 0 {
-                length = 64;
+                length = MAX_8_LENGTH;
             }
             *self.apu.channel_1_enable.lock().unwrap() = true;
             self.mem_unit.write_memory(
@@ -639,11 +603,7 @@ impl GameBoyEmulator {
                 let sweep_reg = self.mem_unit.get_memory(NR10_ADDR, SOURCE);
                 (sweep_reg & 0b11, sweep_reg >> 4)
             };
-            self.apu.channel_1_sweep_enable = if sweep_shift == 0 || sweep_time == 0 {
-                false
-            } else {
-                true
-            };
+            self.apu.channel_1_sweep_enable = !(sweep_shift == 0 || sweep_time == 0);
             self.apu.cycle_count_1 = 0;
             self.mem_unit.write_memory(
                 NR14_ADDR,
@@ -658,14 +618,14 @@ impl GameBoyEmulator {
                 (((self.mem_unit.get_memory(NR14_ADDR, SOURCE) & 0b111) as u32) << 8)
                     + self.mem_unit.get_memory(NR13_ADDR, SOURCE) as u32;
 
-            if self.apu.cycle_count_1 % 32768 == 0 && self.apu.channel_1_sweep_enable {
+            if self.apu.cycle_count_1 % CYCLE_COUNT_128HZ == 0 && self.apu.channel_1_sweep_enable {
                 self.sweep_channel_1(&mut channel_1_frequency);
             }
             if self.apu.cycle_count_1 == 0 {
                 self.volume_envelope(1);
             }
 
-            if self.apu.cycle_count_1 % 16384 == 0 {
+            if self.apu.cycle_count_1 % CYCLE_COUNT_256HZ == 0 {
                 self.length_unit_8(1, &mut length);
             }
             *self.apu.channel_1_frequency.lock().unwrap() = channel_1_frequency;
@@ -679,7 +639,7 @@ impl GameBoyEmulator {
         if initialize {
             //println!("2 initialize!");
             if length == 0 {
-                length = 64;
+                length = MAX_8_LENGTH;
             }
             *self.apu.channel_2_enable.lock().unwrap() = true;
             self.mem_unit.write_memory(
@@ -707,20 +667,20 @@ impl GameBoyEmulator {
             self.volume_envelope(2);
         }
 
-        if self.apu.cycle_count_2 % 16384 == 0 {
+        if self.apu.cycle_count_2 % CYCLE_COUNT_256HZ == 0 {
             self.length_unit_8(2, &mut length);
         }
     }
 
     fn channel_3_advance(&mut self) {
         let initialize = (self.mem_unit.get_memory(NR34_ADDR, SOURCE) >> 7) == 1;
-        let mut length = 256 - self.mem_unit.get_memory(NR31_ADDR, SOURCE) as u16 & 0b11111;
+        let mut length = MAX_16_LENGTH - self.mem_unit.get_memory(NR31_ADDR, SOURCE) as u16;
         *self.apu.channel_3_so1_enable.lock().unwrap() = (self.apu.nr51_data >> 2) & 1;
         *self.apu.channel_3_so2_enable.lock().unwrap() = (self.apu.nr51_data >> 6) & 1;
         if initialize {
             //println!("3 initialize!");
             if length == 0 {
-                length = 256;
+                length = MAX_16_LENGTH;
             }
             self.apu.cycle_count_3 = 0;
             *self.apu.channel_3_pointer.lock().unwrap() = 0;
@@ -757,7 +717,7 @@ impl GameBoyEmulator {
         if initialize {
             //println!("4 initialize!");
             if length == 0 {
-                length = 64;
+                length = MAX_8_LENGTH;
             }
             self.mem_unit.write_memory(
                 NR44_ADDR,
@@ -780,22 +740,19 @@ impl GameBoyEmulator {
         *self.apu.channel_4_width.lock().unwrap() = ((poly_counter_reg >> 3) & 1) == 1;
         *self.apu.channel_4_frequency.lock().unwrap() = {
             let shift_clock_freq = poly_counter_reg >> 4;
-            let freq_divider = {
-                let possible_ratio = poly_counter_reg & 0b111;
-                let s_factor: u32 = 1 << (shift_clock_freq + 4);
-                if possible_ratio == 0 {
-                    s_factor >> 1
-                } else {
-                    s_factor * possible_ratio as u32
-                }
-            };
-            freq_divider
+            let possible_ratio = poly_counter_reg & 0b111;
+            let s_factor: u32 = 1 << (shift_clock_freq + 4);
+            if possible_ratio == 0 {
+                s_factor >> 1
+            } else {
+                s_factor * possible_ratio as u32
+            }
         };
         if self.apu.cycle_count_4 == 0 {
             self.volume_envelope(4);
         }
 
-        if self.apu.cycle_count_4 % 16384 == 0 {
+        if self.apu.cycle_count_4 % CYCLE_COUNT_256HZ == 0 {
             self.length_unit_8(4, &mut length);
         }
     }
@@ -811,9 +768,9 @@ impl GameBoyEmulator {
         self.channel_2_advance();
         self.channel_3_advance();
         self.channel_4_advance();
-        self.apu.cycle_count_1 = (self.apu.cycle_count_1 + ADVANCE_CYCLES) % 65536;
-        self.apu.cycle_count_2 = (self.apu.cycle_count_2 + ADVANCE_CYCLES) % 65536;
-        self.apu.cycle_count_3 = (self.apu.cycle_count_3 + ADVANCE_CYCLES) % 65536;
-        self.apu.cycle_count_4 = (self.apu.cycle_count_4 + ADVANCE_CYCLES) % 65536;
+        self.apu.cycle_count_1 = (self.apu.cycle_count_1 + ADVANCE_CYCLES) % CYCLE_COUNT_512HZ;
+        self.apu.cycle_count_2 = (self.apu.cycle_count_2 + ADVANCE_CYCLES) % CYCLE_COUNT_512HZ;
+        self.apu.cycle_count_3 = (self.apu.cycle_count_3 + ADVANCE_CYCLES) % CYCLE_COUNT_512HZ;
+        self.apu.cycle_count_4 = (self.apu.cycle_count_4 + ADVANCE_CYCLES) % CYCLE_COUNT_512HZ;
     }
 }

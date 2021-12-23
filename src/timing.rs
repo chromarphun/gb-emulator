@@ -1,13 +1,8 @@
+use crate::constants::*;
 use crate::emulator::{GameBoyEmulator, RequestSource};
-use crate::ADVANCE_CYCLES;
 use serde::{Deserialize, Serialize};
-
 const TAC_MAPPING: [u32; 4] = [1024, 16, 64, 256];
-const DIV_ADDR: usize = 0xFF04;
-const TIMA_ADDR: usize = 0xFF05;
-const TMA_ADDR: usize = 0xFF06;
-const TAC_ADDR: usize = 0xFF07;
-const INT_FLAG_ADDR: usize = 0xFF0F;
+
 const SOURCE: RequestSource = RequestSource::Timer;
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -54,14 +49,13 @@ impl GameBoyEmulator {
                 tima = (tima).wrapping_add(1);
                 if tima == 0 {
                     tima = self.mem_unit.get_memory(TMA_ADDR, SOURCE);
-                    std::mem::drop(tima);
                     self.set_timer_interrupt();
                 }
                 self.mem_unit.write_memory(TIMA_ADDR, tima, SOURCE);
             }
         }
         self.timer.div_counter += ADVANCE_CYCLES;
-        if self.timer.div_counter == 256 {
+        if self.timer.div_counter == CYCLE_COUNT_16384HZ {
             self.mem_unit.write_memory(
                 DIV_ADDR,
                 self.mem_unit.get_memory(DIV_ADDR, SOURCE).wrapping_add(1),

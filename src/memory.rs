@@ -5,24 +5,15 @@ use std::convert::TryInto;
 use std::fs::File;
 use std::io::prelude::*;
 use std::iter::FromIterator;
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::cpu::CentralProcessingUnit;
 use crate::emulator::RequestSource;
 
+use crate::constants::*;
 use crate::ppu::PictureProcessingUnit;
 use crate::timing::Timer;
 
-const VRAM_SIZE: usize = 0x2000;
-const IRAM_SIZE: usize = 0x2000;
-const OAM_SIZE: usize = 160;
-const IO_SIZE: usize = 0x80;
-const HRAM_SIZE: usize = 127;
-const CART_TYPE_ADDR: usize = 0x147;
-const ROM_BANK_ADDR: usize = 0x148;
-const RAM_BANK_ADDR: usize = 0x149;
-const INT_FLAG_ADDR: usize = 0xFF0F;
-const P1_ADDR: usize = 0xFF00;
 const SOURCE: RequestSource = RequestSource::MAU;
 
 const BOOT_ROM: [u8; 256] = [
@@ -50,7 +41,9 @@ enum CartType {
     Uninitialized,
     RomOnly,
     Mbc1,
+    Mbc2,
     Mbc3,
+    Mbc5,
 }
 #[derive(Serialize, Deserialize)]
 struct SaveGame {
@@ -164,13 +157,17 @@ impl MemoryUnit {
         let addr = addr.into() as usize;
         match addr {
             0x0000..=0x3FFF => match self.cartridge_type {
-                CartType::RomOnly | CartType::Mbc3 => self.rom[addr],
+                CartType::RomOnly | CartType::Mbc2 | CartType::Mbc3 | CartType::Mbc5 => {
+                    self.rom[addr]
+                }
                 CartType::Mbc1 => self.rom[self.mbc1_0_bank * 0x4000 + addr],
                 _ => panic!("Bad cart type."),
             },
             0x4000..=0x7FFF => match self.cartridge_type {
                 CartType::RomOnly => self.rom[addr],
-                CartType::Mbc1 | CartType::Mbc3 => self.rom[addr + 0x4000 * (self.rom_bank - 1)],
+                CartType::Mbc1 | CartType::Mbc2 | CartType::Mbc3 => {
+                    self.rom[addr + 0x4000 * (self.rom_bank - 1)]
+                }
                 _ => panic!("Bad cart type."),
             },
             0x8000..=0x9FFF => {
@@ -180,27 +177,41 @@ impl MemoryUnit {
                     0xFF
                 }
             }
-            0xA000..=0xBFFF => {
-                if self.available_ram_banks == 0 || !self.ram_enable || self.memory_mode == 1 {
-                    return 0xFF;
-                }
-                match self.cartridge_type {
-                    CartType::RomOnly => self.external_ram[addr - 0xA000],
-                    CartType::Mbc1 | CartType::Mbc3 => {
+            0xA000..=0xBFFF => match self.cartridge_type {
+                CartType::RomOnly => 0xFF,
+                CartType::Mbc1 | CartType::Mbc3 => {
+                    if self.available_ram_banks == 0 || !self.ram_enable || self.memory_mode == 1 {
+                        0xFF
+                    } else {
                         self.external_ram[addr - 0xA000 + 0x2000 * self.ram_bank]
                     }
-                    _ => panic!("Bad cart type."),
                 }
-            }
+                CartType::Mbc2 => {
+                    if !self.ram_enable {
+                        0xFF
+                    } else {
+                        self.external_ram[(addr - 0xA000) % 0x200] & 0xF
+                    }
+                }
+                CartType::Mbc5 => {
+                    if !self.ram_enable {
+                        0xFF
+                    } else {
+                        self.external_ram[addr - 0xA000 + 0x2000 * self.ram_bank]
+                    }
+                }
+                _ => panic!("Bad cart type."),
+            },
             0xC000..=0xDFFF => self.internal_ram[addr - 0xC000],
             0xE000..=0xFDFF => self.internal_ram[addr - 0xE000],
             0xFE00..=0xFE9F => self.oam[addr - 0xFE00],
             0xFF00..=0xFF4B => {
-                if self.invalid_io.contains(&addr) {
-                    0xFF
-                } else {
-                    self.io_registers[addr - 0xFF00]
-                }
+                // if self.invalid_io.contains(&addr) {
+                //     0xFF
+                // } else {
+                //     self.io_registers[addr - 0xFF00]
+                // }
+                self.io_registers[addr - 0xFF00]
             }
             0xFF80..=0xFFFE => self.high_ram[addr - 0xFF80],
             0xFFFF => self.interrupt_enable,
@@ -210,15 +221,32 @@ impl MemoryUnit {
     pub fn write_memory(&mut self, addr: impl Into<usize>, val: u8, source: RequestSource) {
         let addr = addr.into() as usize;
         match addr {
-            0x0000..=0x1FFF => match val {
-                0x0 => self.ram_enable = false,
-                0xA => self.ram_enable = true,
-                _ => {}
+            0x0000..=0x1FFF => match self.cartridge_type {
+                CartType::Mbc1 | CartType::Mbc3 | CartType::Mbc5 => match val {
+                    0x0 => self.ram_enable = false,
+                    0xA => self.ram_enable = true,
+                    _ => {}
+                },
+                CartType::Mbc2 => {
+                    let bit_8_reset = ((addr >> 8) & 1) == 0;
+                    if bit_8_reset {
+                        match val {
+                            0x0 => self.ram_enable = false,
+                            0xA => self.ram_enable = true,
+                            _ => {}
+                        }
+                    } else {
+                        self.rom_bank = val as usize & 0xF;
+                        if self.rom_bank == 0 {
+                            self.rom_bank += 1;
+                        }
+                    }
+                }
+                _ => panic!("Bad cart type."),
             },
             0x2000..=0x3FFF => match self.cartridge_type {
                 CartType::RomOnly => {}
                 CartType::Mbc1 => {
-                    println!("changing mbc1_5_reg to {}", val);
                     if val & MASKING_BITS[self.rom_bank_bits] as u8 == 0 {
                         self.mbc1_5_bit_reg = (val as usize & MASKING_BITS[self.rom_bank_bits]) + 1
                     } else {
@@ -229,21 +257,40 @@ impl MemoryUnit {
                     } else {
                         self.mbc1_5_bit_reg
                     };
-                    println!(
-                        "mbc1_5_bit_reg now {}, rom bank {}",
-                        self.mbc1_5_bit_reg, self.rom_bank
-                    );
+                }
+                CartType::Mbc2 => {
+                    let bit_8_reset = ((addr >> 8) & 1) == 0;
+                    if bit_8_reset {
+                        match val {
+                            0x0 => self.ram_enable = false,
+                            0xA => self.ram_enable = true,
+                            _ => {}
+                        }
+                    } else {
+                        self.rom_bank = val as usize & 0xF;
+                        if self.rom_bank == 0 {
+                            self.rom_bank += 1;
+                        }
+                    }
                 }
                 CartType::Mbc3 => {
                     //println!("changing rom bank to {}", val);
                     self.rom_bank = val as usize & MASKING_BITS[self.rom_bank_bits];
+                }
+                CartType::Mbc5 => {
+                    if addr < 0x3000 {
+                        self.rom_bank &= 0x100;
+                        self.rom_bank |= val as usize;
+                    } else {
+                        self.rom_bank &= 0x0FF;
+                        self.rom_bank |= (val as usize & 1) << 9;
+                    }
                 }
                 _ => panic!("Bad cart type."),
             },
             0x4000..=0x5FFF => match self.cartridge_type {
                 CartType::RomOnly => {}
                 CartType::Mbc1 => {
-                    println!("changing mbc1_2_reg to {}", val);
                     self.mbc1_2_bit_reg = val as usize & 0b11;
                     if self.memory_mode == 1 && self.available_ram_banks == 4 {
                         self.ram_bank = self.mbc1_2_bit_reg;
@@ -257,13 +304,14 @@ impl MemoryUnit {
                 }
                 CartType::Mbc3 => {
                     if val < 0x4 {
-                        println!("changing ram_bank to {}", val);
                         self.memory_mode = 0;
                         self.ram_bank = val as usize & 0b11;
                     } else if val >= 0x8 {
-                        println!("setting rtc reg to  {}", val);
                         self.memory_mode = 1;
                     }
+                }
+                CartType::Mbc5 => {
+                    self.ram_bank = val as usize & 0xF;
                 }
                 _ => panic!("Bad cart type."),
             },
@@ -271,7 +319,6 @@ impl MemoryUnit {
                 CartType::RomOnly => {}
                 CartType::Mbc1 => {
                     self.memory_mode = val;
-                    println!("changing banking to {}", val);
                     if val == 0 {
                         self.rom_bank = if self.rom_bank_bits > 5 {
                             self.mbc1_5_bit_reg + (self.mbc1_2_bit_reg << 5)
@@ -293,9 +340,7 @@ impl MemoryUnit {
                         }
                     }
                 }
-                CartType::Mbc3 => {
-                    println!("trying to latch");
-                }
+                CartType::Mbc3 => {}
                 _ => panic!("Bad cart type."),
             },
             0x8000..=0x9FFF => {
@@ -343,7 +388,7 @@ impl MemoryUnit {
                     self.in_boot_rom = false;
                 }
             }
-            0xFF00..=0xFF7F => self.io_registers[addr - 0xFF00] = val,
+            0xFF01..=0xFF7F => self.io_registers[addr - 0xFF00] = val,
             0xFF80..=0xFFFE => self.high_ram[addr - 0xFF80] = val,
             0xFFFF => self.interrupt_enable = val,
             _ => {}
@@ -356,13 +401,15 @@ impl MemoryUnit {
     fn unload_boot_rom(&mut self) {
         self.rom[..256].copy_from_slice(&self.hold_mem);
     }
-    pub fn load_rom(&mut self, path: &PathBuf) {
+    pub fn load_rom(&mut self, path: &Path) {
         let mut f = File::open(path).expect("File problem!");
         f.read_to_end(&mut self.rom).expect("Read issue!");
         self.cartridge_type = match self.rom[CART_TYPE_ADDR] {
             0 => CartType::RomOnly,
             1..=3 => CartType::Mbc1,
+            5..=6 => CartType::Mbc2,
             0xF..=0x13 => CartType::Mbc3,
+            0x19..=0x1E => CartType::Mbc5,
             _ => CartType::Uninitialized,
         };
         self.available_rom_banks = 1 << (self.get_memory(ROM_BANK_ADDR, SOURCE) + 1);
@@ -377,10 +424,6 @@ impl MemoryUnit {
         self.external_ram
             .extend(vec![0; 0x2000 * self.available_ram_banks as usize]);
         self.rom_bank_bits = self.available_rom_banks.trailing_zeros() as usize + 1;
-        println!(
-            "rom banks: {}, ram banks: {}, rom bank bits: {}",
-            self.available_rom_banks, self.available_ram_banks, self.rom_bank_bits
-        );
         self.load_boot_rom();
     }
     fn dma_transfer(&mut self, reg: usize) {
@@ -434,7 +477,7 @@ impl MemoryUnit {
     }
 }
 impl GameBoyEmulator {
-    pub fn save_game(&self, path: &PathBuf) {
+    pub fn save_game(&self, path: &Path) {
         let save_file = File::create(&path).unwrap();
         let save_data = SaveGame {
             vram: self.mem_unit.vram.clone(),
@@ -460,7 +503,7 @@ impl GameBoyEmulator {
         };
         bincode::serialize_into(save_file, &save_data).unwrap();
     }
-    pub fn open_game(&mut self, path: &PathBuf) {
+    pub fn open_game(&mut self, path: &Path) {
         let open_file = File::open(&path).unwrap();
         let open_data: SaveGame = bincode::deserialize_from(open_file).unwrap();
         self.mem_unit.vram = open_data.vram;
