@@ -72,7 +72,7 @@ pub const RAM_BANK_ADDR: usize = 0x149;
 
 //Memory Specific Constants
 pub const VRAM_SIZE: usize = 0x2000;
-pub const IRAM_SIZE: usize = 0x2000;
+pub const IRAM_SIZE: usize = 0x8000;
 pub const OAM_SIZE: usize = 160;
 pub const IO_SIZE: usize = 0x80;
 pub const HRAM_SIZE: usize = 127;

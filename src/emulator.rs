@@ -1,3 +1,4 @@
+use pixels::Pixels;
 use sdl2::video::Window;
 
 use crate::apu::AudioProcessingUnit;
@@ -5,7 +6,7 @@ use crate::constants::*;
 use crate::cpu::CentralProcessingUnit;
 use crate::epu::EventProcessingUnit;
 use crate::memory::MemoryUnit;
-use crate::pdu::PictureDisplayUnit;
+//use crate::pdu::PictureDisplayUnit;
 use crate::ppu::PictureProcessingUnit;
 use crate::timing::Timer;
 use std::fs::File;
@@ -26,15 +27,17 @@ pub struct GameBoyEmulator {
     pub cpu: CentralProcessingUnit,
     pub mem_unit: MemoryUnit,
     pub ppu: PictureProcessingUnit,
-    pub pdu: PictureDisplayUnit,
+    //pub pdu: PictureDisplayUnit,
     pub epu: EventProcessingUnit,
     pub apu: AudioProcessingUnit,
     pub timer: Timer,
     pub sdl_context: sdl2::Sdl,
     pub log: File,
     pub frame: [[u8; 160]; 144],
+    pub cgb: bool,
     pub running: bool,
     _window: Window,
+    pub pixels: Pixels,
 }
 
 impl GameBoyEmulator {
@@ -66,7 +69,7 @@ impl GameBoyEmulator {
             cpu: CentralProcessingUnit::new(),
             mem_unit: MemoryUnit::new(),
             ppu: PictureProcessingUnit::new(),
-            pdu: PictureDisplayUnit::new(pixels),
+            //pdu: PictureDisplayUnit::new(pixels),
             epu: EventProcessingUnit::new(event_pump),
             timer: Timer::new(),
             sdl_context,
@@ -76,12 +79,11 @@ impl GameBoyEmulator {
             )
             .expect("Unable to create file"),
             frame: [[0; 160]; 144],
+            cgb: false,
             running: true,
             _window: window,
+            pixels,
         }
-    }
-    pub fn load_rom(&mut self, path: &Path) {
-        self.mem_unit.load_rom(path);
     }
     pub fn run(&mut self) {
         let work_period = Duration::new(0, PERIOD_NS);
@@ -91,7 +93,7 @@ impl GameBoyEmulator {
             for _ in 0..ADVANCES_PER_PERIOD {
                 self.cpu_advance();
                 self.ppu_advance();
-                self.pdu_advance();
+                //self.pdu_advance();
                 self.timer_advance();
                 self.apu_advance();
                 self.mem_unit.dma_tick();

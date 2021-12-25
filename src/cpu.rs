@@ -434,20 +434,24 @@ impl GameBoyEmulator {
                 self.cpu.cycle_goal = INTERRUPT_DOTS;
             } else {
                 let command = self.mem_unit.get_memory(self.cpu.pc, SOURCE) as usize;
-                if self.cpu.pc == 0xc263 {
-                    println!("debug");
+                if self.cpu.pc == 0x238 {
+                    let q = 0;
                 }
 
-                if self.cpu.printing {
-                    let next = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
-                    println!(
-                        "{}",
-                        format!(
-                            "pc: {:X}, command: {:X}, next: {:X}",
-                            self.cpu.pc, command, next
-                        ),
-                    );
-                }
+                // if self.cpu.printing || !self.mem_unit.in_boot_rom || 1 == 1 {
+                //     let next = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
+                //     println!(
+                //         "{}",
+                //         format!(
+                //             "pc: {:X}, command: {:X}, next: {:X}, ppu_mode: {}, ppu_cycle: {}",
+                //             self.cpu.pc,
+                //             command,
+                //             next,
+                //             self.get_mode(),
+                //             self.ppu.cycle_count,
+                //         ),
+                //     );
+                // }
                 // if !self.mem_unit.in_boot_rom {
                 //     let next = self.mem_unit.get_memory(self.cpu.pc + 1);
                 //     self.log
@@ -1566,6 +1570,7 @@ impl GameBoyEmulator {
                 self.cpu.z_flag = 1 - ((*reg >> bit_num) & 1);
                 self.cpu.n_flag = 0;
                 self.cpu.h_flag = 1;
+                mem = false;
             }
             0x8..=0xB => {
                 *reg &= 255 - 2u8.pow(bit_num as u32);

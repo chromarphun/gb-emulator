@@ -1,5 +1,6 @@
 use crate::constants::*;
 use crate::emulator::RequestSource;
+use pixels::Pixels;
 use serde::{Deserialize, Serialize};
 use std::cmp;
 
@@ -7,9 +8,14 @@ use crate::emulator::GameBoyEmulator;
 
 const SOURCE: RequestSource = RequestSource::PPU;
 
+#[inline]
+fn convert_to_index(row: usize, column: usize) -> usize {
+    (160 * row + column) * 4
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PictureProcessingUnit {
-    cycle_count: u32,
+    pub cycle_count: u32,
     possible_sprites: Vec<[u8; 4]>,
     starting: bool,
     current_sprite_search: u8,
@@ -17,11 +23,11 @@ pub struct PictureProcessingUnit {
     window_row_activated: bool,
     draw_window: bool,
     color_indexes: [usize; 4],
-    bg_tilemap_start: usize,
-    win_tilemap_start: usize,
+    bg_tilemap_start_addr: usize,
+    win_tilemap_start_addr: usize,
     px_within_row: usize,
-    bg_tilemap_row_start: usize,
-    win_tilemap_row_start: usize,
+    bg_tilemap_row_start_index: usize,
+    win_tilemap_row_start_index: usize,
     bg_tiles_within_row_start: usize,
     bg_row_within_tile: usize,
     win_row_within_tile: usize,
@@ -33,6 +39,9 @@ pub struct PictureProcessingUnit {
     bg_win_enable: bool,
     obj_enable: bool,
     frame_num: u32,
+    frame_data: Vec<u8>,
+    frame_index: usize,
+    row_colors: Vec<usize>,
 }
 
 impl PictureProcessingUnit {
@@ -46,11 +55,11 @@ impl PictureProcessingUnit {
             window_row_activated: false,
             draw_window: false,
             color_indexes: [0; 4],
-            bg_tilemap_start: 0,
-            win_tilemap_start: 0,
+            bg_tilemap_start_addr: 0,
+            win_tilemap_start_addr: 0,
             px_within_row: 0,
-            bg_tilemap_row_start: 0,
-            win_tilemap_row_start: 0,
+            bg_tilemap_row_start_index: 0,
+            win_tilemap_row_start_index: 0,
             bg_tiles_within_row_start: 0,
             bg_row_within_tile: 0,
             win_row_within_tile: 0,
@@ -62,6 +71,9 @@ impl PictureProcessingUnit {
             bg_win_enable: false,
             obj_enable: false,
             frame_num: 0,
+            frame_data: vec![0; 92160],
+            frame_index: 0,
+            row_colors: vec![0; 160],
         }
     }
 }
@@ -226,22 +238,16 @@ impl GameBoyEmulator {
             self.ppu.window_row_activated =
                 wy <= row && self.get_win_enable_flag() == 1 && wx > 0 && wx < 144;
             self.ppu.draw_window = self.ppu.window_row_activated && wx < 8;
-            let bgp = self.mem_unit.get_memory(BGP_ADDR, SOURCE) as usize;
-            self.ppu.color_indexes = [
-                bgp & 0b11,
-                (bgp >> 2) & 0b11,
-                (bgp >> 4) & 0b11,
-                (bgp >> 6) & 0b11,
-            ];
+
             let scx = self.mem_unit.get_memory(SCX_ADDR, SOURCE) as usize;
             let scy = self.mem_unit.get_memory(SCY_ADDR, SOURCE) as usize;
 
-            self.ppu.bg_tilemap_start = if self.get_bg_tile_map_flag() == 0 {
+            self.ppu.bg_tilemap_start_addr = if self.get_bg_tile_map_flag() == 0 {
                 0x9800
             } else {
                 0x9C00
             };
-            self.ppu.win_tilemap_start = if self.get_win_tile_map_flag() == 0 {
+            self.ppu.win_tilemap_start_addr = if self.get_win_tile_map_flag() == 0 {
                 0x9800
             } else {
                 0x9C00
@@ -254,8 +260,8 @@ impl GameBoyEmulator {
                 scx % TILE_WIDTH
             };
 
-            self.ppu.bg_tilemap_row_start = TILES_PER_ROW * (total_bg_row / BG_TILE_HEIGHT);
-            self.ppu.win_tilemap_row_start =
+            self.ppu.bg_tilemap_row_start_index = TILES_PER_ROW * (total_bg_row / BG_TILE_HEIGHT);
+            self.ppu.win_tilemap_row_start_index =
                 TILES_PER_ROW * (self.ppu.current_window_row / BG_TILE_HEIGHT);
 
             self.ppu.bg_tiles_within_row_start = scx / TILE_WIDTH;
@@ -272,55 +278,78 @@ impl GameBoyEmulator {
             self.ppu.x_precendence = vec![200u8; 160];
             self.ppu.cycle_count += ADVANCE_CYCLES;
         } else if self.ppu.column < 160 && self.ppu.bg_win_enable {
+            let mut frame_index = convert_to_index(row, self.ppu.column);
             let tile_data_flag = self.get_tile_data_flag();
-            let (tilemap_start, tilemap_row_start, tiles_within_row_start, row_within_tile) =
-                if self.ppu.draw_window {
-                    (
-                        self.ppu.win_tilemap_start,
-                        self.ppu.win_tilemap_row_start,
-                        0,
-                        self.ppu.win_row_within_tile,
-                    )
-                } else {
-                    (
-                        self.ppu.bg_tilemap_start,
-                        self.ppu.bg_tilemap_row_start,
-                        self.ppu.bg_tiles_within_row_start,
-                        self.ppu.bg_row_within_tile,
-                    )
-                };
-            let tile_map_index =
-                tilemap_row_start + (tiles_within_row_start + self.ppu.tile_num as usize) % 32;
-            let absolute_tile_index = if tile_data_flag == 1 {
-                self.mem_unit
-                    .get_memory(tilemap_start + tile_map_index as usize, SOURCE)
-                    as usize
+            let (
+                tilemap_start_addr,
+                tilemap_row_start_index,
+                tiles_within_row_start,
+                row_within_tile,
+            ) = if self.ppu.draw_window {
+                (
+                    self.ppu.win_tilemap_start_addr,
+                    self.ppu.win_tilemap_row_start_index,
+                    0,
+                    self.ppu.win_row_within_tile,
+                )
             } else {
-                let initial_index = self
-                    .mem_unit
-                    .get_memory(tilemap_start + tile_map_index as usize, SOURCE)
-                    as usize;
+                (
+                    self.ppu.bg_tilemap_start_addr,
+                    self.ppu.bg_tilemap_row_start_index,
+                    self.ppu.bg_tiles_within_row_start,
+                    self.ppu.bg_row_within_tile,
+                )
+            };
+
+            let tile_map_index = tilemap_row_start_index
+                + (tiles_within_row_start + self.ppu.tile_num as usize) % 32;
+            let tile_map_addr = tilemap_start_addr + tile_map_index;
+            let (bg_priority, vertical_flip, horizontal_flip, bank_number, palette) = if self.cgb {
+                let bg_attribute_data = self.mem_unit.access_vram(tile_map_addr, 1);
+                (
+                    (bg_attribute_data >> 7) == 1,
+                    ((bg_attribute_data >> 6) & 1) == 1,
+                    ((bg_attribute_data >> 5) & 1) == 1,
+                    ((bg_attribute_data >> 3) & 1),
+                    self.mem_unit.get_bg_rbg(bg_attribute_data & 0b111),
+                )
+            } else {
+                (
+                    false,
+                    false,
+                    false,
+                    0,
+                    [
+                        [155, 188, 15, 255],
+                        [139, 172, 15, 255],
+                        [48, 98, 48, 255],
+                        [15, 56, 15, 255],
+                    ],
+                )
+            };
+            let absolute_tile_data_index = if tile_data_flag == 1 {
+                self.mem_unit.access_vram(tile_map_addr, 0) as usize
+            } else {
+                let initial_index = self.mem_unit.access_vram(tile_map_addr, 0) as usize;
                 if initial_index < VRAM_BLOCK_SIZE {
                     initial_index + 2 * VRAM_BLOCK_SIZE
                 } else {
                     initial_index
                 }
             };
-            let tile_data_index = absolute_tile_index * BYTES_PER_TILE // getting to the starting byte
+            let tile_data_addr = VRAM_START_ADDR + absolute_tile_data_index * BYTES_PER_TILE // getting to the starting byte
                 + row_within_tile * BYTES_PER_TILE_ROW; //getting to the row
-            let least_sig_byte = self
-                .mem_unit
-                .get_memory(VRAM_START_ADDR + tile_data_index as usize, SOURCE);
-            let most_sig_byte = self
-                .mem_unit
-                .get_memory(VRAM_START_ADDR + (tile_data_index + 1) as usize, SOURCE);
+            let least_sig_byte = self.mem_unit.access_vram(tile_data_addr, bank_number);
+            let most_sig_byte = self.mem_unit.access_vram(tile_data_addr + 1, bank_number);
 
             'pixel_loop: for pixel in self.ppu.px_within_row..8 {
-                let bgp_index = ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1) << 1)
+                let color_index = ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1) << 1)
                     + ((least_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1))
                     as usize;
-                let pixel_color = self.ppu.color_indexes[bgp_index] as u8;
-                self.frame[row][self.ppu.column] = pixel_color;
+                self.ppu.row_colors[self.ppu.column] = color_index;
+                self.ppu.frame_data[frame_index..(frame_index + 4)]
+                    .copy_from_slice(&palette[color_index]);
+                frame_index += 4;
                 self.ppu.column += 1;
                 if self.ppu.column == 160 {
                     break 'pixel_loop;
@@ -395,7 +424,7 @@ impl GameBoyEmulator {
                     // not transparent
                     {
                         self.ppu.x_precendence[x as usize] = x_start;
-                        if !bg_over_obj || (self.frame[row][x as usize] == 0) {
+                        if !bg_over_obj || (self.ppu.row_colors[x as usize] == 0) {
                             self.frame[row][x as usize] = draw_color;
                         }
                     }
@@ -447,6 +476,11 @@ impl GameBoyEmulator {
                 self.ppu.cycle_count = 0;
                 self.ppu.starting = true;
                 let new_mode = if self.mem_unit.get_memory(LY_ADDR, SOURCE) == 144 {
+                    let ppu_enable = self.get_ppu_enable();
+                    let frame = self.pixels.get_frame();
+                    if ppu_enable != 0 {
+                        frame.copy_from_slice(&self.ppu.frame_data);
+                    }
                     1
                 } else {
                     2
@@ -458,9 +492,6 @@ impl GameBoyEmulator {
     }
 
     fn vblank(&mut self) {
-        if self.get_ppu_enable() == 0 {
-            self.frame = [[0; 160]; 144];
-        }
         if self.ppu.starting {
             self.ppu.frame_num += 1;
             self.ppu.starting = false;
@@ -468,7 +499,9 @@ impl GameBoyEmulator {
             if self.get_stat_vblank_int_flag() == 1 {
                 self.set_stat_interrupt();
             }
+            self.pixels.render().unwrap();
             self.ppu.current_window_row = 0;
+            self.ppu.frame_index = 0;
         }
         self.ppu.cycle_count += ADVANCE_CYCLES;
         if self.ppu.cycle_count == ROW_DOTS {
@@ -497,5 +530,3 @@ impl GameBoyEmulator {
         }
     }
 }
-
-impl PictureProcessingUnit {}

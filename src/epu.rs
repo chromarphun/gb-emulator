@@ -87,7 +87,7 @@ impl GameBoyEmulator {
                     win_event: WindowEvent::Resized(width, height),
                     ..
                 } => {
-                    self.pdu.pixels.resize_surface(width as u32, height as u32);
+                    self.pixels.resize_surface(width as u32, height as u32);
                 }
                 _ => {}
             }
