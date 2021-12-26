@@ -550,7 +550,7 @@ impl MemoryUnit {
         let mut index = (palette * 8) as usize;
         for i in 0..4 {
             let color_data =
-                self.bg_color_ram[index] as u16 + ((self.bg_color_ram[index + 1] as u16) << 8);
+                self.obj_color_ram[index] as u16 + ((self.obj_color_ram[index + 1] as u16) << 8);
             let red = (color_data & 0x1F) as u8;
             let green = ((color_data >> 5) & 0x1F) as u8;
             let blue = ((color_data >> 10) & 0x1F) as u8;

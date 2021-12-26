@@ -9,8 +9,8 @@ use crate::emulator::GameBoyEmulator;
 const SOURCE: RequestSource = RequestSource::PPU;
 
 #[inline]
-fn convert_to_index(row: usize, column: usize) -> usize {
-    (160 * row + column) * 4
+fn convert_to_index(row: impl Into<usize>, column: impl Into<usize>) -> usize {
+    (160 * row.into() as usize + column.into() as usize) * 4
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -34,7 +34,7 @@ pub struct PictureProcessingUnit {
     column: usize,
     tile_num: i8,
     current_window_row: usize,
-    x_precendence: Vec<u8>,
+    pixel_priority: Vec<u8>,
     current_sprite_drawing: usize,
     bg_win_enable: bool,
     obj_enable: bool,
@@ -66,7 +66,7 @@ impl PictureProcessingUnit {
             column: 0,
             tile_num: 0,
             current_window_row: 0,
-            x_precendence: vec![200; 160],
+            pixel_priority: vec![220; 160],
             current_sprite_drawing: 0,
             bg_win_enable: false,
             obj_enable: false,
@@ -275,16 +275,16 @@ impl GameBoyEmulator {
             self.ppu.bg_win_enable = self.get_bg_window_enable() == 1;
             self.ppu.obj_enable = self.get_sprite_enable_flag() == 1;
             self.ppu.current_sprite_drawing = 0;
-            self.ppu.x_precendence = vec![200u8; 160];
+            self.ppu.pixel_priority = vec![200u8; 160];
             self.ppu.cycle_count += ADVANCE_CYCLES;
-        } else if self.ppu.column < 160 && self.ppu.bg_win_enable {
+        } else if self.ppu.column < 160 && (self.ppu.bg_win_enable || self.cgb) {
             let mut frame_index = convert_to_index(row, self.ppu.column);
             let tile_data_flag = self.get_tile_data_flag();
             let (
                 tilemap_start_addr,
                 tilemap_row_start_index,
                 tiles_within_row_start,
-                row_within_tile,
+                mut row_within_tile,
             ) = if self.ppu.draw_window {
                 (
                     self.ppu.win_tilemap_start_addr,
@@ -300,10 +300,10 @@ impl GameBoyEmulator {
                     self.ppu.bg_row_within_tile,
                 )
             };
-
             let tile_map_index = tilemap_row_start_index
                 + (tiles_within_row_start + self.ppu.tile_num as usize) % 32;
             let tile_map_addr = tilemap_start_addr + tile_map_index;
+
             let (bg_priority, vertical_flip, horizontal_flip, bank_number, palette) = if self.cgb {
                 let bg_attribute_data = self.mem_unit.access_vram(tile_map_addr, 1);
                 (
@@ -314,19 +314,19 @@ impl GameBoyEmulator {
                     self.mem_unit.get_bg_rbg(bg_attribute_data & 0b111),
                 )
             } else {
-                (
-                    false,
-                    false,
-                    false,
-                    0,
-                    [
-                        [155, 188, 15, 255],
-                        [139, 172, 15, 255],
-                        [48, 98, 48, 255],
-                        [15, 56, 15, 255],
-                    ],
-                )
+                let color_data = self.mem_unit.get_memory(BGP_ADDR, SOURCE) as usize;
+
+                let palette: [[u8; 4]; 4] = [
+                    DMG_COLOR_MAP[color_data & 0b11],
+                    DMG_COLOR_MAP[(color_data >> 2) & 0b11],
+                    DMG_COLOR_MAP[(color_data >> 4) & 0b11],
+                    DMG_COLOR_MAP[(color_data >> 6) & 0b11],
+                ];
+                (false, false, false, 0, palette)
             };
+            if vertical_flip {
+                row_within_tile = 7 - row_within_tile;
+            }
             let absolute_tile_data_index = if tile_data_flag == 1 {
                 self.mem_unit.access_vram(tile_map_addr, 0) as usize
             } else {
@@ -342,10 +342,25 @@ impl GameBoyEmulator {
             let least_sig_byte = self.mem_unit.access_vram(tile_data_addr, bank_number);
             let most_sig_byte = self.mem_unit.access_vram(tile_data_addr + 1, bank_number);
 
-            'pixel_loop: for pixel in self.ppu.px_within_row..8 {
+            let bg_range = if horizontal_flip {
+                (self.ppu.px_within_row..=7).rev().collect::<Vec<usize>>()
+            } else {
+                (self.ppu.px_within_row..=7).collect::<Vec<usize>>()
+            };
+            'pixel_loop: for pixel in bg_range.into_iter() {
                 let color_index = ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1) << 1)
                     + ((least_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1))
                     as usize;
+                let priority_level = if !self.ppu.bg_win_enable {
+                    BG_LCDC_LOW_PRIORITY
+                } else if color_index == 0 {
+                    BG_COLOR_0_PRIORITY
+                } else if bg_priority {
+                    BG_HIGH_PRIORITY
+                } else {
+                    BG_COLOR_1_3_PRIORITY
+                };
+                self.ppu.pixel_priority[self.ppu.column] = priority_level;
                 self.ppu.row_colors[self.ppu.column] = color_index;
                 self.ppu.frame_data[frame_index..(frame_index + 4)]
                     .copy_from_slice(&palette[color_index]);
@@ -370,6 +385,7 @@ impl GameBoyEmulator {
             let sprite = self.ppu.possible_sprites[self.ppu.current_sprite_drawing];
             let x_flip = ((sprite[OAM_ATTRIBUTE_INDEX] >> 5) & 1) == 1;
             let y_flip = ((sprite[OAM_ATTRIBUTE_INDEX] >> 6) & 1) == 1;
+
             let row_within = if y_flip {
                 (obj_length - 1 + sprite[OAM_Y_INDEX]) as usize - row - 16
             } else {
@@ -387,48 +403,72 @@ impl GameBoyEmulator {
             };
             let tile_data_index =
                 tile_map_index as usize * BYTES_PER_TILE + row_within * BYTES_PER_TILE_ROW;
+
+            let (palette, bank_number) = if self.cgb {
+                (
+                    self.mem_unit
+                        .get_obj_rbg(sprite[OAM_ATTRIBUTE_INDEX] & 0b111),
+                    (sprite[OAM_ATTRIBUTE_INDEX] >> 3) & 1,
+                )
+            } else {
+                let color_data = if (sprite[OAM_ATTRIBUTE_INDEX] >> 4) & 1 == 0 {
+                    self.mem_unit.get_memory(OBP0_ADDR, SOURCE) as usize
+                } else {
+                    self.mem_unit.get_memory(OBP1_ADDR, SOURCE) as usize
+                };
+                let palette: [[u8; 4]; 4] = [
+                    DMG_COLOR_MAP[color_data & 0b11],
+                    DMG_COLOR_MAP[(color_data >> 2) & 0b11],
+                    DMG_COLOR_MAP[(color_data >> 4) & 0b11],
+                    DMG_COLOR_MAP[(color_data >> 6) & 0b11],
+                ];
+                (palette, 0)
+            };
             let least_sig_byte = self
                 .mem_unit
-                .get_memory(VRAM_START_ADDR + tile_data_index, SOURCE);
+                .access_vram(VRAM_START_ADDR + tile_data_index, bank_number);
             let most_sig_byte = self
                 .mem_unit
-                .get_memory(VRAM_START_ADDR + (tile_data_index + 1), SOURCE);
-
-            let palette = if (sprite[OAM_ATTRIBUTE_INDEX] >> 4) & 1 == 0 {
-                self.mem_unit.get_memory(OBP0_ADDR, SOURCE) as usize
-            } else {
-                self.mem_unit.get_memory(OBP1_ADDR, SOURCE) as usize
-            };
-            let color_indexes: [usize; 4] = [
-                palette & 0b11,
-                (palette >> 2) & 0b11,
-                (palette >> 4) & 0b11,
-                (palette >> 6) & 0b11,
-            ];
+                .access_vram(VRAM_START_ADDR + (tile_data_index + 1), bank_number);
             let x_end = sprite[OAM_X_INDEX];
+            let priority = if bg_over_obj {
+                OAM_LOW_PRIORITY
+            } else if self.cgb {
+                self.ppu.current_sprite_drawing as u8
+            } else {
+                x_end
+            };
             if x_end > 0 && x_end < 168 {
                 let x_start = cmp::max(0, x_end - 8);
-                let mut index = TILE_WIDTH - (x_end - x_start) as usize;
-                let obj_range = if x_flip {
-                    (x_start..x_end).rev().collect::<Vec<u8>>()
+                let x_end = cmp::min(160, x_end);
+                let mut x = x_start;
+                let starting_pixel = if x_end < 7 { 7 - x_end as usize } else { 0 };
+                let ending_pixel = if x_start > 152 {
+                    159 - x_start as usize
                 } else {
-                    (x_start..x_end).collect::<Vec<u8>>()
+                    7
                 };
-                for x in obj_range.into_iter().filter(|z| *z < 160) {
-                    let color_index = ((((most_sig_byte >> (TILE_WIDTH - index - 1)) & 1) << 1)
-                        + ((least_sig_byte >> (TILE_WIDTH - index - 1)) & 1))
+
+                let obj_range = if x_flip {
+                    (starting_pixel..=ending_pixel)
+                        .rev()
+                        .collect::<Vec<usize>>()
+                } else {
+                    (starting_pixel..=ending_pixel).collect::<Vec<usize>>()
+                };
+                let mut frame_index = convert_to_index(row, x_start);
+                for pixel in obj_range.into_iter() {
+                    let color_index = ((((most_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1) << 1)
+                        + ((least_sig_byte >> (TILE_WIDTH - pixel - 1)) & 1))
                         as usize;
-                    let draw_color = color_indexes[color_index] as u8;
-                    if (x_start < self.ppu.x_precendence[x as usize]) //no obj with priority 
-                                & (color_index != 0)
-                    // not transparent
-                    {
-                        self.ppu.x_precendence[x as usize] = x_start;
-                        if !bg_over_obj || (self.ppu.row_colors[x as usize] == 0) {
-                            self.frame[row][x as usize] = draw_color;
-                        }
+                    let color_pixels = palette[color_index];
+                    if (priority < self.ppu.pixel_priority[x as usize]) & (color_index != 0) {
+                        self.ppu.pixel_priority[x as usize] = priority;
+                        self.ppu.frame_data[frame_index..(frame_index + 4)]
+                            .copy_from_slice(&color_pixels);
                     }
-                    index += 1;
+                    frame_index += 4;
+                    x += 1;
                 }
             }
 

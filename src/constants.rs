@@ -94,6 +94,17 @@ pub const OAM_Y_INDEX: usize = 0;
 pub const OAM_X_INDEX: usize = 1;
 pub const OAM_TILE_INDEX: usize = 2;
 pub const OAM_ATTRIBUTE_INDEX: usize = 3;
+pub const DMG_COLOR_MAP: [[u8; 4]; 4] = [
+    [155, 188, 15, 255],
+    [139, 172, 15, 255],
+    [48, 98, 48, 255],
+    [15, 56, 15, 255],
+];
+pub const BG_LCDC_LOW_PRIORITY: u8 = 220;
+pub const BG_COLOR_0_PRIORITY: u8 = 215;
+pub const OAM_LOW_PRIORITY: u8 = 210;
+pub const BG_COLOR_1_3_PRIORITY: u8 = 205;
+pub const BG_HIGH_PRIORITY: u8 = 0;
 
 //APU Specific Constants
 pub const DUTY_CONVERSION: [f32; 4] = [0.125, 0.25, 0.5, 0.75];
