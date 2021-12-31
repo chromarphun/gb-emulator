@@ -10,17 +10,16 @@ use crate::memory::MemoryUnit;
 use crate::ppu::PictureProcessingUnit;
 use crate::timing::Timer;
 use std::fs::File;
-use std::path::Path;
 use std::time::{Duration, Instant};
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum RequestSource {
     APU,
     CPU,
     EPU,
     MAU,
     PPU,
-    PDU,
+    SPEC,
     Timer,
 }
 pub struct GameBoyEmulator {
@@ -33,11 +32,12 @@ pub struct GameBoyEmulator {
     pub timer: Timer,
     pub sdl_context: sdl2::Sdl,
     pub log: File,
-    pub frame: [[u8; 160]; 144],
+    pub double_speed: bool,
     pub cgb: bool,
     pub running: bool,
     _window: Window,
     pub pixels: Pixels,
+    pub iteration_count: usize,
 }
 
 impl GameBoyEmulator {
@@ -78,11 +78,12 @@ impl GameBoyEmulator {
                 "C://Users//chrom//Documents//Emulators//gb-emulator//src//commands.log",
             )
             .expect("Unable to create file"),
-            frame: [[0; 160]; 144],
+            double_speed: false,
             cgb: false,
             running: true,
             _window: window,
             pixels,
+            iteration_count: 0,
         }
     }
     pub fn run(&mut self) {
@@ -92,17 +93,23 @@ impl GameBoyEmulator {
             let now = Instant::now();
             for _ in 0..ADVANCES_PER_PERIOD {
                 self.cpu_advance();
-                self.ppu_advance();
-                //self.pdu_advance();
                 self.timer_advance();
+                self.dma_tick();
+                if self.double_speed {
+                    self.cpu_advance();
+                    self.timer_advance();
+                    self.dma_tick();
+                }
                 self.apu_advance();
-                self.mem_unit.dma_tick();
+                self.ppu_advance();
+                self.iteration_count += 1;
             }
             self.event_check();
             // println!(
             //     "elapsed: {}us",
             //     work_period.saturating_sub(now.elapsed()).as_micros()
             // );
+
             spin_sleep::sleep(work_period.saturating_sub(now.elapsed()));
         }
     }

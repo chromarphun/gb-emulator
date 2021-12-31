@@ -2,8 +2,8 @@ use crate::constants::*;
 use crate::emulator::GameBoyEmulator;
 use crate::emulator::RequestSource;
 use serde::{Deserialize, Serialize};
-// use std::fs::File;
-// use std::io::prelude::*;
+use std::fs::File;
+use std::io::prelude::*;
 
 const SOURCE: RequestSource = RequestSource::CPU;
 
@@ -283,22 +283,22 @@ const FUNCTION_MAP: [fn(&mut GameBoyEmulator, u8); 256] = [
 ];
 
 const CYCLES_MAP: [u32; 256] = [
-    4, 12, 4, 4, 4, 4, 4, 4, 20, 4, 4, 4, 4, 4, 4, 4, // 0x0
-    4, 12, 4, 4, 4, 4, 4, 4, 12, 4, 4, 4, 4, 4, 4, 4, // 0x1
-    4, 12, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x2
-    4, 12, 4, 4, 12, 12, 12, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x3
-    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x4
-    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x5
-    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x6
-    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x7
-    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x8
-    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0x9
-    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0xA
-    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, // 0xB
-    4, 12, 12, 16, 12, 16, 4, 16, 4, 16, 12, 4, 12, 24, 4, 16, // 0xC
-    4, 12, 12, 0, 12, 16, 4, 16, 4, 16, 12, 0, 12, 0, 4, 16, // 0xD
-    12, 12, 4, 0, 0, 16, 4, 16, 16, 4, 16, 0, 0, 0, 4, 16, // 0xE
-    12, 12, 4, 4, 0, 16, 4, 16, 12, 4, 16, 4, 0, 0, 4, 16, // 0xF
+    4, 12, 8, 8, 4, 4, 8, 4, 20, 8, 8, 8, 4, 4, 8, 4, // 0x0
+    4, 12, 8, 8, 4, 4, 8, 4, 12, 8, 8, 8, 4, 4, 8, 4, // 0x1
+    8, 12, 8, 8, 4, 4, 8, 4, 8, 8, 8, 8, 4, 4, 8, 4, // 0x2
+    8, 12, 8, 8, 12, 12, 12, 4, 8, 8, 8, 8, 4, 4, 8, 4, // 0x3
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4, // 0x4
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4, // 0x5
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4, // 0x6
+    8, 8, 8, 8, 8, 8, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4, // 0x7
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4, // 0x8
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4, // 0x9
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4, // 0xA
+    4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4, // 0xB
+    8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 8, 12, 24, 8, 16, // 0xC
+    8, 12, 12, 0, 12, 16, 8, 16, 8, 16, 12, 0, 12, 0, 8, 16, // 0xD
+    12, 12, 8, 0, 0, 16, 8, 16, 16, 4, 16, 0, 0, 0, 8, 16, // 0xE
+    12, 12, 8, 4, 0, 16, 8, 16, 12, 8, 16, 4, 0, 0, 8, 16, // 0xF
 ];
 
 #[inline]
@@ -334,6 +334,7 @@ pub struct CentralProcessingUnit {
     old_pc: u16,
     waiting: bool,
     cycle_goal: u32,
+    call_counter: i32,
     pub printing: bool,
 }
 
@@ -357,8 +358,37 @@ impl CentralProcessingUnit {
             old_pc: 0,
             waiting: false,
             cycle_goal: 0,
+            call_counter: 0,
             printing: false,
         }
+    }
+    fn cgb_initialize_after_boot(&mut self) {
+        self.regs[REG_A] = 0x11;
+        self.z_flag = 1;
+        self.n_flag = 0;
+        self.h_flag = 0;
+        self.c_flag = 0;
+        self.regs[REG_B] = 0;
+        self.regs[REG_C] = 0;
+        self.regs[REG_D] = 0xFF;
+        self.regs[REG_E] = 0x56;
+        self.regs[REG_H] = 0;
+        self.regs[REG_L] = 0xD;
+        self.sp = 0xFFFE;
+    }
+    fn dmg_initialize_after_boot(&mut self) {
+        self.regs[REG_A] = 1;
+        self.z_flag = 0;
+        self.n_flag = 0;
+        self.h_flag = 0;
+        self.c_flag = 0;
+        self.regs[REG_B] = 0xFF;
+        self.regs[REG_C] = 0x13;
+        self.regs[REG_D] = 0;
+        self.regs[REG_E] = 0xC1;
+        self.regs[REG_H] = 0x84;
+        self.regs[REG_L] = 0x3;
+        self.sp = 0xFFFE;
     }
     fn add_set_flags_16(&mut self, val1: &u32, val2: &u32, z: bool, h: bool, c: bool) {
         if z {
@@ -397,6 +427,14 @@ impl GameBoyEmulator {
                 self.cpu.cycle_count = 0;
             }
         } else {
+            if self.mem_unit.cpu_initialize {
+                self.mem_unit.cpu_initialize = false;
+                if self.cgb {
+                    self.cpu.cgb_initialize_after_boot();
+                } else {
+                    self.cpu.dmg_initialize_after_boot();
+                }
+            }
             if self.cpu.change_ime_true {
                 self.cpu.change_ime_true = false;
                 self.cpu.ime = true;
@@ -406,8 +444,8 @@ impl GameBoyEmulator {
                 self.cpu.change_ime_true = true;
             }
 
-            let viable_interrupts = self.mem_unit.get_memory(INT_FLAG_ADDR, SOURCE)
-                & self.mem_unit.get_memory(INT_ENABLE_ADDR, SOURCE);
+            let viable_interrupts =
+                self.get_memory(INT_FLAG_ADDR, SOURCE) & self.get_memory(INT_ENABLE_ADDR, SOURCE);
 
             if self.cpu.ime && viable_interrupts != 0 && !self.cpu.halting {
                 let (mask, addr) = match viable_interrupts.trailing_zeros() {
@@ -420,9 +458,9 @@ impl GameBoyEmulator {
                         panic!("Wow, how did you get here? This is the interrupt area where they are no interrupts.")
                     }
                 };
-                self.mem_unit.write_memory(
+                self.write_memory(
                     INT_FLAG_ADDR,
-                    self.mem_unit.get_memory(INT_FLAG_ADDR, SOURCE) & mask,
+                    self.get_memory(INT_FLAG_ADDR, SOURCE) & mask,
                     SOURCE,
                 );
                 self.cpu.ime = false;
@@ -433,37 +471,47 @@ impl GameBoyEmulator {
                 self.cpu.cycle_count += ADVANCE_CYCLES;
                 self.cpu.cycle_goal = INTERRUPT_DOTS;
             } else {
-                let command = self.mem_unit.get_memory(self.cpu.pc, SOURCE) as usize;
-                if self.cpu.pc == 0x238 {
-                    let q = 0;
+                let command = self.get_memory(self.cpu.pc, SOURCE) as usize;
+                if command == 0xB8 || command == 0xA0 {
+                    println!(
+                        "Checking, iter_count: {}, NR52: {:#010b}",
+                        self.iteration_count,
+                        self.get_memory(0xFF26_usize, SOURCE)
+                    );
                 }
-
-                // if self.cpu.printing || !self.mem_unit.in_boot_rom || 1 == 1 {
-                //     let next = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
-                //     println!(
-                //         "{}",
-                //         format!(
-                //             "pc: {:X}, command: {:X}, next: {:X}, ppu_mode: {}, ppu_cycle: {}",
-                //             self.cpu.pc,
-                //             command,
-                //             next,
-                //             self.get_mode(),
-                //             self.ppu.cycle_count,
-                //         ),
-                //     );
-                // }
-                // if !self.mem_unit.in_boot_rom {
-                //     let next = self.mem_unit.get_memory(self.cpu.pc + 1);
-                //     self.log
-                //         .write(
-                //             format!(
-                //                 "pc: {:X}, command: {:X}, regs: {:?}, next: {:X} \n",
-                //                 self.cpu.pc, command, self.cpu.regs, next
-                //             )
-                //             .as_bytes(),
-                //         )
-                //         .expect("WRITE FAILURE");
-                // }
+                if self.cpu.printing {
+                    let next = self.get_memory(self.cpu.pc + 1, SOURCE);
+                    println!(
+                        "{}",
+                        format!(
+                            "pc: {:X}, command: {:X}, next: {:X}, sp: {:X}",
+                            self.cpu.pc, command, next, self.cpu.sp
+                        ),
+                    );
+                }
+                if !self.mem_unit.in_boot_rom && self.iteration_count >= 4583490 {
+                    let next1 = self.get_memory(self.cpu.pc + 1, SOURCE);
+                    let next2 = self.get_memory(self.cpu.pc + 2, SOURCE);
+                    let stack1 = self.get_memory(self.cpu.sp, SOURCE);
+                    let stack2 = self.get_memory(self.cpu.sp + 1, SOURCE);
+                    self.log
+                        .write(
+                            format!(
+                                "pc: {:04X} | command: {:<20} | regs: {:02X?} | next: {:02X} {:02X} | sp: {:04X} | stack: {:02X} {:02X} | iter: {:010} \n",
+                                self.cpu.pc,
+                                FUNCTION_NAMES[command],
+                                self.cpu.regs,
+                                next1,
+                                next2,
+                                self.cpu.sp,
+                                stack1,
+                                stack2,
+                                self.iteration_count
+                            )
+                            .as_bytes(),
+                        )
+                        .expect("WRITE FAILURE");
+                }
 
                 self.cpu.old_pc = self.cpu.pc;
 
@@ -485,7 +533,7 @@ impl GameBoyEmulator {
                     self.cpu.pc = self.cpu.old_pc;
                 }
                 self.cpu.cycle_count += ADVANCE_CYCLES;
-                if self.cpu.cycle_count != self.cpu.cycle_goal {
+                if self.cpu.cycle_count < self.cpu.cycle_goal {
                     self.cpu.waiting = true;
                 } else {
                     self.cpu.cycle_count = 0;
@@ -495,14 +543,14 @@ impl GameBoyEmulator {
     }
     fn push_stack(&mut self, high_val: u8, low_val: u8) {
         self.cpu.sp = self.cpu.sp.wrapping_sub(1);
-        self.mem_unit.write_memory(self.cpu.sp, high_val, SOURCE);
+        self.write_memory(self.cpu.sp, high_val, SOURCE);
         self.cpu.sp = self.cpu.sp.wrapping_sub(1);
-        self.mem_unit.write_memory(self.cpu.sp, low_val, SOURCE);
+        self.write_memory(self.cpu.sp, low_val, SOURCE);
     }
     fn pop_stack(&mut self) -> [u8; 2] {
-        let val1 = self.mem_unit.get_memory((self.cpu.sp) as usize, SOURCE);
+        let val1 = self.get_memory((self.cpu.sp) as usize, SOURCE);
         self.cpu.sp = self.cpu.sp.wrapping_add(1);
-        let val2 = self.mem_unit.get_memory((self.cpu.sp) as usize, SOURCE);
+        let val2 = self.get_memory((self.cpu.sp) as usize, SOURCE);
         self.cpu.sp = self.cpu.sp.wrapping_add(1);
         [val1, val2]
     }
@@ -515,10 +563,21 @@ impl GameBoyEmulator {
     fn nop(&mut self, _command: u8) {
         self.cpu.pc += 1;
     }
-    fn stop(&mut self, _command: u8) {}
+    fn stop(&mut self, _command: u8) {
+        let key1 = self.get_memory(KEY1_ADDR, SOURCE);
+        let prepare = (key1 & 1) == 1;
+        if prepare && self.cgb {
+            self.double_speed = !self.double_speed;
+            println!("switching to double_speed {}", self.double_speed);
+            self.cpu.cycle_modification = 8200;
+            let speed_bit = if self.double_speed { 1 } else { 0 };
+            self.write_memory(KEY1_ADDR, speed_bit << 7, RequestSource::SPEC);
+            self.cpu.pc += 1;
+        }
+    }
     fn ld_reg_16(&mut self, command: u8) {
-        let low_byte = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
-        let high_byte = self.mem_unit.get_memory(self.cpu.pc + 2, SOURCE);
+        let low_byte = self.get_memory(self.cpu.pc + 1, SOURCE);
+        let high_byte = self.get_memory(self.cpu.pc + 2, SOURCE);
         match command {
             0x01 => {
                 //LD BC
@@ -547,8 +606,8 @@ impl GameBoyEmulator {
         self.cpu.pc += 3;
     }
     fn ld_addr_a(&mut self, command: u8) {
-        let adding_1 = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
-        let adding_2 = self.mem_unit.get_memory(self.cpu.pc + 2, SOURCE);
+        let adding_1 = self.get_memory(self.cpu.pc + 1, SOURCE);
+        let adding_2 = self.get_memory(self.cpu.pc + 2, SOURCE);
         let addr = match command {
             0x02 => combine_bytes(self.cpu.regs[REG_B], self.cpu.regs[REG_C]), //LD (BC) A
 
@@ -594,8 +653,7 @@ impl GameBoyEmulator {
                 format!("Unrecognized command {:X} at ld_reg_addr_a!", command)
             ),
         };
-        self.mem_unit
-            .write_memory(addr, self.cpu.regs[REG_A], SOURCE);
+        self.write_memory(addr, self.cpu.regs[REG_A], SOURCE);
         self.cpu.pc += 1;
     }
     fn inc_reg_16(&mut self, command: u8) {
@@ -640,9 +698,9 @@ impl GameBoyEmulator {
             0x34 => {
                 //INC (HL)
                 let addr = combine_bytes(self.cpu.regs[REG_H], self.cpu.regs[REG_L]);
-                let mut val = self.mem_unit.get_memory(addr, SOURCE);
+                let mut val = self.get_memory(addr, SOURCE);
                 val = val.wrapping_add(1);
-                self.mem_unit.write_memory(addr, val, SOURCE);
+                self.write_memory(addr, val, SOURCE);
                 val
             }
             0x0C => {
@@ -696,9 +754,9 @@ impl GameBoyEmulator {
                 //DEC (HL)
                 let addr: usize =
                     combine_bytes(self.cpu.regs[REG_H], self.cpu.regs[REG_L]) as usize;
-                let mut val = self.mem_unit.get_memory(addr, SOURCE);
+                let mut val = self.get_memory(addr, SOURCE);
                 val = val.wrapping_sub(1);
-                self.mem_unit.write_memory(addr, val, SOURCE);
+                self.write_memory(addr, val, SOURCE);
                 val
             }
             0x0D => {
@@ -732,7 +790,7 @@ impl GameBoyEmulator {
         self.cpu.pc += 1;
     }
     fn ld_reg_8(&mut self, command: u8) {
-        let to_load = self.mem_unit.get_memory((self.cpu.pc + 1) as usize, SOURCE);
+        let to_load = self.get_memory((self.cpu.pc + 1) as usize, SOURCE);
 
         match command {
             0x06 => {
@@ -750,7 +808,7 @@ impl GameBoyEmulator {
             0x36 => {
                 //LD (HL) XX
                 let addr = combine_bytes(self.cpu.regs[REG_H], self.cpu.regs[REG_L]);
-                self.mem_unit.write_memory(addr, to_load, SOURCE);
+                self.write_memory(addr, to_load, SOURCE);
             }
             0x0E => {
                 //LD C
@@ -821,16 +879,16 @@ impl GameBoyEmulator {
         self.cpu.pc += 1;
     }
     fn ld_addr_sp(&mut self, _command: u8) {
-        let addr_low = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
-        let addr_high = self.mem_unit.get_memory(self.cpu.pc + 2, SOURCE);
+        let addr_low = self.get_memory(self.cpu.pc + 1, SOURCE);
+        let addr_high = self.get_memory(self.cpu.pc + 2, SOURCE);
         let addr = combine_bytes(addr_high, addr_low);
         let (high_sp, low_sp) = split_u16(self.cpu.sp);
-        self.mem_unit.write_memory(addr, low_sp, SOURCE);
-        self.mem_unit.write_memory(addr + 1, high_sp, SOURCE);
+        self.write_memory(addr, low_sp, SOURCE);
+        self.write_memory(addr + 1, high_sp, SOURCE);
         self.cpu.pc += 3;
     }
     fn jr(&mut self, command: u8) {
-        let add = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
+        let add = self.get_memory(self.cpu.pc + 1, SOURCE);
         self.cpu.pc += 2;
         let condition = match command {
             0x18 => true,                 //JR XX
@@ -868,8 +926,8 @@ impl GameBoyEmulator {
         self.cpu.pc += 1;
     }
     fn ld_a_addr(&mut self, command: u8) {
-        let addr_low = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
-        let addr_high = self.mem_unit.get_memory(self.cpu.pc + 2, SOURCE);
+        let addr_low = self.get_memory(self.cpu.pc + 1, SOURCE);
+        let addr_high = self.get_memory(self.cpu.pc + 2, SOURCE);
         let addr = match command {
             0x0A => combine_bytes(self.cpu.regs[REG_B], self.cpu.regs[REG_C]), //LD A (BC)
 
@@ -911,7 +969,7 @@ impl GameBoyEmulator {
                 format!("Unrecognized command {:X} at ld_a_reg_addr!", command)
             ),
         };
-        let new_val = self.mem_unit.get_memory(addr, SOURCE);
+        let new_val = self.get_memory(addr, SOURCE);
         self.cpu.regs[REG_A] = new_val;
         self.cpu.pc += 1;
     }
@@ -1047,7 +1105,7 @@ impl GameBoyEmulator {
                 ),
             }
         };
-        let new_val = self.mem_unit.get_memory(addr, SOURCE);
+        let new_val = self.get_memory(addr, SOURCE);
         self.cpu.regs[reg] = new_val;
         self.cpu.pc += 1;
     }
@@ -1067,14 +1125,11 @@ impl GameBoyEmulator {
             ),
         };
         self.cpu.pc += 1;
-        self.mem_unit.write_memory(addr, self.cpu.regs[reg], SOURCE);
+        self.write_memory(addr, self.cpu.regs[reg], SOURCE);
     }
     fn halt(&mut self, _command: u8) {
         self.cpu.halting = true;
-        if self.mem_unit.get_memory(INT_FLAG_ADDR, SOURCE)
-            & self.mem_unit.get_memory(INT_ENABLE_ADDR, SOURCE)
-            != 0
-        {
+        if self.get_memory(INT_FLAG_ADDR, SOURCE) & self.get_memory(INT_ENABLE_ADDR, SOURCE) != 0 {
             self.cpu.pc += 1;
             self.cpu.halting = false;
             if !self.cpu.ime {
@@ -1083,7 +1138,7 @@ impl GameBoyEmulator {
         }
     }
     fn arthimetic_a(&mut self, command: u8) {
-        let additional_val = self.mem_unit.get_memory((self.cpu.pc + 1) as usize, SOURCE);
+        let additional_val = self.get_memory((self.cpu.pc + 1) as usize, SOURCE);
         let (command_high, command_low) = split_byte(command);
         let op_val = if command_high <= 0xB {
             match command_low % 8 {
@@ -1095,7 +1150,7 @@ impl GameBoyEmulator {
                 0x5 => self.cpu.regs[REG_L],
                 0x6 => {
                     let addr = combine_bytes(self.cpu.regs[REG_H], self.cpu.regs[REG_L]) as usize;
-                    self.mem_unit.get_memory(addr, SOURCE)
+                    self.get_memory(addr, SOURCE)
                 }
                 0x7 => self.cpu.regs[REG_A],
                 _ => panic!(
@@ -1262,6 +1317,7 @@ impl GameBoyEmulator {
             let [addr_low, addr_high] = self.pop_stack();
             let addr = combine_bytes(addr_high, addr_low);
             self.cpu.pc = addr;
+            self.cpu.call_counter -= 1;
         }
     }
     fn pop(&mut self, command: u8) {
@@ -1299,8 +1355,8 @@ impl GameBoyEmulator {
         self.push_stack(high_val, low_val);
     }
     fn call(&mut self, command: u8) {
-        let addr_low = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
-        let addr_high = self.mem_unit.get_memory(self.cpu.pc + 2, SOURCE);
+        let addr_low = self.get_memory(self.cpu.pc + 1, SOURCE);
+        let addr_high = self.get_memory(self.cpu.pc + 2, SOURCE);
         let addr = combine_bytes(addr_high, addr_low);
         self.cpu.pc += 3;
         let (pc_high, pc_low) = split_u16(self.cpu.pc);
@@ -1311,6 +1367,7 @@ impl GameBoyEmulator {
                     self.push_stack(pc_high, pc_low);
                     self.cpu.pc = addr;
                     self.cpu.cycle_modification = 24;
+                    self.cpu.call_counter += 1;
                 }
             }
             0xD4 => {
@@ -1319,6 +1376,7 @@ impl GameBoyEmulator {
                     self.push_stack(pc_high, pc_low);
                     self.cpu.pc = addr;
                     self.cpu.cycle_modification = 24;
+                    self.cpu.call_counter += 1;
                 }
             }
             0xCC => {
@@ -1327,6 +1385,7 @@ impl GameBoyEmulator {
                     self.push_stack(pc_high, pc_low);
                     self.cpu.pc = addr;
                     self.cpu.cycle_modification = 24;
+                    self.cpu.call_counter += 1;
                 }
             }
             0xDC => {
@@ -1335,6 +1394,7 @@ impl GameBoyEmulator {
                     self.push_stack(pc_high, pc_low);
                     self.cpu.pc = addr;
                     self.cpu.cycle_modification = 24;
+                    self.cpu.call_counter += 1;
                 }
             }
             0xCD => {
@@ -1342,6 +1402,7 @@ impl GameBoyEmulator {
                 self.push_stack(pc_high, pc_low);
                 self.cpu.pc = addr;
                 self.cpu.cycle_modification = 24;
+                self.cpu.call_counter += 1;
             }
             _ => panic!("{}", format!("Unrecognized command {:X} at call!", command)),
         }
@@ -1356,10 +1417,11 @@ impl GameBoyEmulator {
         } else {
             16 * (high_command as u16 - 0xC)
         };
+        self.cpu.call_counter += 1;
     }
     fn jp(&mut self, command: u8) {
-        let low_byte = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
-        let high_byte = self.mem_unit.get_memory(self.cpu.pc + 2, SOURCE);
+        let low_byte = self.get_memory(self.cpu.pc + 1, SOURCE);
+        let high_byte = self.get_memory(self.cpu.pc + 2, SOURCE);
         let addr = combine_bytes(high_byte, low_byte);
         let condition = match command {
             0xC2 => self.cpu.z_flag == 0, //JP NZ
@@ -1380,7 +1442,7 @@ impl GameBoyEmulator {
         self.cpu.pc = combine_bytes(self.cpu.regs[REG_H], self.cpu.regs[REG_L]);
     }
     fn add_sp_i8(&mut self, _command: u8) {
-        let val = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE) as i8;
+        let val = self.get_memory(self.cpu.pc + 1, SOURCE) as i8;
         let new_sp = self.cpu.sp.wrapping_add(val as u16);
         self.cpu.h_flag = if val >= 0 {
             if (self.cpu.sp & 0xF) as i8 + (val & 0xF) > 0xF {
@@ -1412,7 +1474,7 @@ impl GameBoyEmulator {
         self.cpu.pc += 2;
     }
     fn ld_hl_sp_i8(&mut self, _command: u8) {
-        let val = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE) as i8;
+        let val = self.get_memory(self.cpu.pc + 1, SOURCE) as i8;
         let new_hl = self.cpu.sp.wrapping_add(val as u16);
         self.cpu.h_flag = if val >= 0 {
             if (self.cpu.sp & 0xF) as i8 + (val & 0xF) > 0xF {
@@ -1459,7 +1521,7 @@ impl GameBoyEmulator {
     fn cb(&mut self, _command: u8) {
         let mut addr_val_ref = 0;
         let mut mem = false;
-        let cb_command = self.mem_unit.get_memory(self.cpu.pc + 1, SOURCE);
+        let cb_command = self.get_memory(self.cpu.pc + 1, SOURCE);
         let (cb_command_high, cb_command_low) = split_byte(cb_command);
         let cb_command_low_second_half = cb_command_low >= 0x8;
         let bit_num = if cb_command_low_second_half {
@@ -1476,11 +1538,12 @@ impl GameBoyEmulator {
             0x4 => &mut self.cpu.regs[REG_H],
             0x5 => &mut self.cpu.regs[REG_L],
             0x6 => {
-                addr_val_ref = self.mem_unit.get_memory(
+                addr_val_ref = self.get_memory(
                     combine_bytes(self.cpu.regs[REG_H], self.cpu.regs[REG_L]),
                     SOURCE,
                 );
                 mem = true;
+                self.cpu.cycle_modification = 16;
                 &mut addr_val_ref
             }
 
@@ -1567,15 +1630,21 @@ impl GameBoyEmulator {
                 self.cpu.z_flag = if *reg == 0 { 1 } else { 0 };
             }
             4..=7 => {
+                // bit
+                if mem {
+                    self.cpu.cycle_modification = 12;
+                }
                 self.cpu.z_flag = 1 - ((*reg >> bit_num) & 1);
                 self.cpu.n_flag = 0;
                 self.cpu.h_flag = 1;
                 mem = false;
             }
             0x8..=0xB => {
+                //res
                 *reg &= 255 - 2u8.pow(bit_num as u32);
             }
             0xC..=0xF => {
+                //set
                 *reg |= 1 << bit_num;
             }
             _ => panic!(
@@ -1584,7 +1653,7 @@ impl GameBoyEmulator {
             ),
         };
         if mem {
-            self.mem_unit.write_memory(
+            self.write_memory(
                 combine_bytes(self.cpu.regs[REG_H], self.cpu.regs[REG_L]),
                 addr_val_ref,
                 SOURCE,

@@ -26,14 +26,14 @@ impl Timer {
 }
 impl GameBoyEmulator {
     fn set_timer_interrupt(&mut self) {
-        self.mem_unit.write_memory(
+        self.write_memory(
             INT_FLAG_ADDR,
-            self.mem_unit.get_memory(INT_FLAG_ADDR, SOURCE) | 0b100,
+            self.get_memory(INT_FLAG_ADDR, SOURCE) | 0b100,
             SOURCE,
         );
     }
     pub fn timer_advance(&mut self) {
-        let tac = self.mem_unit.get_memory(TAC_ADDR, SOURCE) as usize;
+        let tac = self.get_memory(TAC_ADDR, SOURCE) as usize;
         if (tac >> 2) == 1 {
             let clock = TAC_MAPPING[tac & 0b11];
             self.timer.tima_counter = if clock == self.timer.prev_clock {
@@ -45,20 +45,20 @@ impl GameBoyEmulator {
             self.timer.tima_counter += ADVANCE_CYCLES;
             if self.timer.tima_counter == clock {
                 self.timer.tima_counter = 0;
-                let mut tima = self.mem_unit.get_memory(TIMA_ADDR, SOURCE);
+                let mut tima = self.get_memory(TIMA_ADDR, SOURCE);
                 tima = (tima).wrapping_add(1);
                 if tima == 0 {
-                    tima = self.mem_unit.get_memory(TMA_ADDR, SOURCE);
+                    tima = self.get_memory(TMA_ADDR, SOURCE);
                     self.set_timer_interrupt();
                 }
-                self.mem_unit.write_memory(TIMA_ADDR, tima, SOURCE);
+                self.write_memory(TIMA_ADDR, tima, SOURCE);
             }
         }
         self.timer.div_counter += ADVANCE_CYCLES;
         if self.timer.div_counter == CYCLE_COUNT_16384HZ {
-            self.mem_unit.write_memory(
+            self.write_memory(
                 DIV_ADDR,
-                self.mem_unit.get_memory(DIV_ADDR, SOURCE).wrapping_add(1),
+                self.get_memory(DIV_ADDR, SOURCE).wrapping_add(1),
                 SOURCE,
             );
             self.timer.div_counter = 0;

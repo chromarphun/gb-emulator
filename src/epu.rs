@@ -50,7 +50,7 @@ impl GameBoyEmulator {
         }
         self.mem_unit.directional_presses = self.epu.new_directional_presses;
         self.mem_unit.action_presses = self.epu.new_action_presses;
-        let mut p1 = self.mem_unit.get_memory(P1_ADDR, SOURCE);
+        let mut p1 = self.get_memory(P1_ADDR, SOURCE);
         let prev_p1 = p1;
         self.mem_unit.directional_presses = self.epu.new_directional_presses;
         self.mem_unit.action_presses = self.epu.new_action_presses;
@@ -68,13 +68,13 @@ impl GameBoyEmulator {
         }
         p1 += new_bits;
         if ((prev_p1 | p1) - p1) & 0xF != 0 {
-            self.mem_unit.write_memory(
+            self.write_memory(
                 INT_FLAG_ADDR,
-                self.mem_unit.get_memory(INT_FLAG_ADDR, SOURCE) | (1 << 4),
+                self.get_memory(INT_FLAG_ADDR, SOURCE) | (1 << 4),
                 SOURCE,
             );
         }
-        self.mem_unit.write_memory(P1_ADDR, p1, SOURCE);
+        self.write_memory(P1_ADDR, p1, SOURCE);
 
         for event in self.epu.event_pump.poll_iter() {
             match event {

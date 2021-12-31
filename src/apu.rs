@@ -90,8 +90,7 @@ struct Channel3 {
 impl AudioCallback for Channel3 {
     type Channel = f32;
     fn callback(&mut self, out: &mut [f32]) {
-        let output_shift = VOLUME_SHIFT_CONVERSION
-            [((self.output_level.load(Ordering::Relaxed) >> 5) & 0b11) as usize];
+        let output_shift = self.output_level.load(Ordering::Relaxed);
         let mut right = true;
         let so1_mod =
             self.so1_enable.load(Ordering::Relaxed) as f32 * (*self.so1_value.read().unwrap());
@@ -213,6 +212,7 @@ pub struct AudioProcessingUnit {
     channel_2_frequency: Arc<AtomicU32>,
     channel_1_sweep_count: u8,
     channel_1_sweep_enable: bool,
+    channel_1_length_enable: bool,
     cycle_count_1: u32,
     cycle_count_2: u32,
     cycle_count_3: u32,
@@ -227,6 +227,9 @@ pub struct AudioProcessingUnit {
     channel_1_duty: Arc<Mutex<f32>>,
     channel_1_so1_enable: Arc<AtomicU8>,
     channel_1_so2_enable: Arc<AtomicU8>,
+    pub channel_1_length_counter: u16,
+    channel_1_triggered: bool,
+    channel_1_length_timer: u32,
 
     channel_2_enable: Arc<AtomicBool>,
     channel_2_volume: Arc<AtomicU8>,
@@ -234,6 +237,8 @@ pub struct AudioProcessingUnit {
     channel_2_duty: Arc<Mutex<f32>>,
     channel_2_so1_enable: Arc<AtomicU8>,
     channel_2_so2_enable: Arc<AtomicU8>,
+    channel_2_length_enable: bool,
+    pub channel_2_length_counter: u16,
 
     channel_3_pointer: Arc<AtomicUsize>,
     channel_3_enable: Arc<AtomicBool>,
@@ -241,6 +246,8 @@ pub struct AudioProcessingUnit {
     channel_3_output_level: Arc<AtomicU8>,
     channel_3_so1_enable: Arc<AtomicU8>,
     channel_3_so2_enable: Arc<AtomicU8>,
+    channel_3_length_enable: bool,
+    pub channel_3_length_counter: u16,
 
     wave_ram: Arc<Mutex<[u8; 16]>>,
     channel_4_volume_count: u8,
@@ -251,6 +258,8 @@ pub struct AudioProcessingUnit {
     channel_4_volume: Arc<AtomicU8>,
     channel_4_so1_enable: Arc<AtomicU8>,
     channel_4_so2_enable: Arc<AtomicU8>,
+    channel_4_length_enable: bool,
+    pub channel_4_length_counter: u16,
 
     _channel_1_device: AudioDevice<Channel1>,
     _channel_2_device: AudioDevice<Channel2>,
@@ -346,7 +355,7 @@ impl AudioProcessingUnit {
         let desired_spec = AudioSpecDesired {
             freq: Some(SAMPLES_PER_SECOND as i32),
             channels: Some(2),
-            samples: Some(32),
+            samples: Some(SAMPLE_BUFFER_SIZE),
         };
         let channel_1_device = audio_subsystem
             .open_playback(None, &desired_spec, |_spec| {
@@ -445,18 +454,26 @@ impl AudioProcessingUnit {
             channel_1_duty,
             channel_1_so1_enable,
             channel_1_so2_enable,
+            channel_1_length_enable: false,
+            channel_1_length_counter: 0,
+            channel_1_triggered: false,
+            channel_1_length_timer: 0,
             channel_2_enable,
             channel_2_volume,
             channel_2_volume_count,
             channel_2_duty,
             channel_2_so1_enable,
             channel_2_so2_enable,
+            channel_2_length_enable: false,
+            channel_2_length_counter: 0,
             channel_3_pointer,
             channel_3_enable,
             channel_3_frequency,
             channel_3_output_level,
             channel_3_so1_enable,
             channel_3_so2_enable,
+            channel_3_length_enable: false,
+            channel_3_length_counter: 0,
             wave_ram,
             channel_4_volume_count,
             channel_4_lsfr,
@@ -466,6 +483,8 @@ impl AudioProcessingUnit {
             channel_4_volume,
             channel_4_so1_enable,
             channel_4_so2_enable,
+            channel_4_length_enable: false,
+            channel_4_length_counter: 0,
             _channel_1_device: channel_1_device,
             _channel_2_device: channel_2_device,
             _channel_3_device: channel_3_device,
@@ -474,20 +493,46 @@ impl AudioProcessingUnit {
     }
 }
 impl GameBoyEmulator {
+    fn disable_channel(&mut self, channel: u8) {
+        let (enable_channel, mask) = match channel {
+            1 => (&self.apu.channel_1_enable, 0b11111110),
+            2 => (&self.apu.channel_2_enable, 0b11111101),
+            3 => (&self.apu.channel_3_enable, 0b11111011),
+            4 => (&self.apu.channel_4_enable, 0b11110111),
+            _ => panic!(
+                "Wow, how did you get here? You gave a channel for volume envelope that's bad."
+            ),
+        };
+        (*enable_channel).store(false, Ordering::Relaxed);
+        self.write_memory(NR52_ADDR, self.get_memory(NR52_ADDR, SOURCE) & mask, SOURCE);
+    }
+    fn enable_channel(&mut self, channel: u8) {
+        let (enable_channel, mask) = match channel {
+            1 => (&self.apu.channel_1_enable, 0b00000001),
+            2 => (&self.apu.channel_2_enable, 0b00000010),
+            3 => (&self.apu.channel_3_enable, 0b00000100),
+            4 => (&self.apu.channel_4_enable, 0b00001000),
+            _ => panic!(
+                "Wow, how did you get here? You gave a channel for volume envelope that's bad."
+            ),
+        };
+        (*enable_channel).store(true, Ordering::Relaxed);
+        self.write_memory(NR52_ADDR, self.get_memory(NR52_ADDR, SOURCE) | mask, SOURCE);
+    }
     fn volume_envelope(&mut self, channel: u8) {
         let (volume_reg, channel_volume_count, channel_volume) = match channel {
             1 => (
-                self.mem_unit.get_memory(NR12_ADDR, SOURCE),
+                self.get_memory(NR12_ADDR, SOURCE),
                 &mut self.apu.channel_1_volume_count,
                 &self.apu.channel_1_volume,
             ),
             2 => (
-                self.mem_unit.get_memory(NR22_ADDR, SOURCE),
+                self.get_memory(NR22_ADDR, SOURCE),
                 &mut self.apu.channel_2_volume_count,
                 &self.apu.channel_2_volume,
             ),
             4 => (
-                self.mem_unit.get_memory(NR42_ADDR, SOURCE),
+                self.get_memory(NR42_ADDR, SOURCE),
                 &mut self.apu.channel_4_volume_count,
                 &self.apu.channel_4_volume,
             ),
@@ -514,8 +559,12 @@ impl GameBoyEmulator {
     }
     fn sweep_channel_1(&mut self, frequency: &mut u32) {
         let (sweep_shift, sweep_inc, sweep_time) = {
-            let sweep_reg = self.mem_unit.get_memory(NR10_ADDR, SOURCE);
-            (sweep_reg & 0b111, (sweep_reg >> 3 & 1) == 0, sweep_reg >> 4)
+            let sweep_reg = self.get_memory(NR10_ADDR, SOURCE);
+            (
+                sweep_reg & 0b111,
+                (sweep_reg >> 3 & 1) == 0,
+                (sweep_reg >> 4) & 0b111,
+            )
         };
         if sweep_time != 0 && self.apu.channel_1_sweep_count >= (sweep_time - 1) && sweep_shift != 0
         {
@@ -528,13 +577,12 @@ impl GameBoyEmulator {
             self.apu.channel_1_sweep_count = 0;
             if *frequency >= MAX_FREQ_VAL {
                 *frequency = old_frequency;
-                self.apu.channel_1_enable.store(false, Ordering::Relaxed);
+                self.disable_channel(1);
             } else {
-                self.mem_unit
-                    .write_memory(NR13_ADDR, (*frequency & 0xFF) as u8, SOURCE);
-                self.mem_unit.write_memory(
+                self.write_memory(NR13_ADDR, (*frequency & 0xFF) as u8, SOURCE);
+                self.write_memory(
                     NR14_ADDR,
-                    (self.mem_unit.get_memory(NR14_ADDR, SOURCE) & 0b11111000)
+                    (self.get_memory(NR14_ADDR, SOURCE) & 0b11111000)
                         | ((*frequency >> 8) & 0b111) as u8,
                     SOURCE,
                 );
@@ -543,77 +591,135 @@ impl GameBoyEmulator {
             self.apu.channel_1_sweep_count = std::cmp::min(self.apu.channel_1_sweep_count + 1, 254);
         }
     }
-    fn length_unit_8(&mut self, channel: u8, length: &mut u8) {
-        let (cc_reg, length_addr, enable_reg, nr52_bit_mask) = match channel {
-            1 => (
-                self.mem_unit.get_memory(NR14_ADDR, SOURCE),
-                NR11_ADDR,
-                &self.apu.channel_1_enable,
-                0b11111110,
-            ),
-            2 => (
-                self.mem_unit.get_memory(NR24_ADDR, SOURCE),
-                NR21_ADDR,
-                &self.apu.channel_2_enable,
-                0b11111101,
-            ),
-            4 => (
-                self.mem_unit.get_memory(NR44_ADDR, SOURCE),
-                NR41_ADDR,
-                &self.apu.channel_4_enable,
-                0b11110111,
-            ),
+    fn length_unit(&mut self, channel: u8) {
+        let length = match channel {
+            1 => &mut self.apu.channel_1_length_counter,
+            2 => &mut self.apu.channel_2_length_counter,
+            3 => &mut self.apu.channel_3_length_counter,
+            4 => &mut self.apu.channel_4_length_counter,
             _ => {
-                panic!("Wow, how did you get here? You gave a channel for length unit that's bad.")
+                panic!("AHHHHHHHHHHH");
             }
         };
-        let counter_consec = (cc_reg >> 6) & 1;
-        if counter_consec == 1 {
-            if *length <= 1 {
-                enable_reg.store(false, Ordering::Relaxed);
-                self.mem_unit.write_memory(
-                    NR52_ADDR,
-                    self.mem_unit.get_memory(NR52_ADDR, SOURCE) & nr52_bit_mask,
-                    SOURCE,
-                );
-            } else {
-                self.mem_unit.write_memory(
-                    length_addr,
-                    self.mem_unit.get_memory(length_addr, SOURCE) & 0b11000000
-                        | (MAX_8_LENGTH - *length),
-                    SOURCE,
-                );
-                *length -= 1;
-            }
+
+        *length -= 1;
+        println!(
+            "dropping length to {} for {} at {}",
+            *length, channel, self.iteration_count
+        );
+        if *length == 0 {
+            self.disable_channel(channel);
         }
     }
-
-    fn length_unit_16(&mut self, length: &mut u16) {
-        let cc_reg = self.mem_unit.get_memory(NR34_ADDR, SOURCE);
-        let counter_consec = cc_reg >> 6 & 1;
-        if counter_consec == 1 {
-            if *length == 0 {
-                self.apu.channel_3_enable.store(false, Ordering::Relaxed);
-                self.mem_unit.write_memory(
-                    NR52_ADDR,
-                    self.mem_unit.get_memory(NR52_ADDR, SOURCE) & 0b11111011,
-                    SOURCE,
-                );
-            } else {
-                self.mem_unit.write_memory(
-                    NR31_ADDR,
-                    self.mem_unit.get_memory(NR31_ADDR, SOURCE) & 0b11000000
-                        | (MAX_16_LENGTH - *length) as u8,
-                    SOURCE,
-                );
-                *length -= 1;
+    fn dac_check(&mut self, channel: u8) {
+        let vol_env_addr = match channel {
+            1 => NR12_ADDR,
+            2 => NR22_ADDR,
+            4 => NR42_ADDR,
+            _ => {
+                panic!(
+                    "Wow, how did you get here? You gave a channel for DAC check unit that's bad."
+                )
             }
+        };
+        if (self.get_memory(vol_env_addr, SOURCE) >> 3) == 0 {
+            self.disable_channel(channel);
         }
     }
+    pub fn nrx4_write(&mut self, channel: u8, val: u8) {
+        // let (length_enable, cycle_count, length) = match channel {
+        //     1 => (
+        //         &mut self.apu.channel_1_length_enable,
+        //         self.apu.cycle_count_1,
+        //         &mut self.apu.channel_1_length_counter,
+        //     ),
+        //     2 => (
+        //         &mut self.apu.channel_2_length_enable,
+        //         self.apu.cycle_count_2,
+        //         &mut self.apu.channel_2_length_counter,
+        //     ),
+        //     3 => (
+        //         &mut self.apu.channel_3_length_enable,
+        //         self.apu.cycle_count_3,
+        //         &mut self.apu.channel_3_length_counter,
+        //     ),
+        //     4 => (
+        //         &mut self.apu.channel_4_length_enable,
+        //         self.apu.cycle_count_4,
+        //         &mut self.apu.channel_4_length_counter,
+        //     ),
+        //     _ => panic!("Invalid channel for nrx4 write"),
+        // };
+        let old_enable = self.apu.channel_1_length_enable;
+        self.apu.channel_1_length_enable = (val >> 6) & 1 == 1;
 
+        let trigger = (val >> 7) & 1 == 1;
+        let refill = if trigger && channel == 1 {
+            self.trigger_channel_1()
+        } else {
+            false
+        };
+        if old_enable != self.apu.channel_1_length_enable && channel == 1 {
+            println!("length is now {}", self.apu.channel_1_length_enable);
+        }
+        if !old_enable
+            && self.apu.channel_1_length_enable
+            && (self.apu.channel_1_length_timer == 0)
+            && self.apu.channel_1_length_counter > 0
+            && !refill
+        {
+            println!("extra length!");
+            self.length_unit(channel);
+        } else {
+            println!(
+                "Extra length failed, old enable is {}, new enable is {}, cycle condition is {}",
+                old_enable,
+                self.apu.channel_1_length_enable,
+                (self.apu.channel_1_length_timer == 0)
+            );
+        }
+        println!("=====")
+    }
+    fn trigger_channel_1(&mut self) -> bool {
+        println!(
+            "1 initialized, current length: {}, length clock: {}, length_enable: {}, iter_count: {}",
+            self.apu.channel_1_length_counter,
+            self.apu.cycle_count_1 % CYCLE_COUNT_256HZ,
+            self.apu.channel_1_length_enable,
+            self.iteration_count
+        );
+        self.enable_channel(1);
+        self.apu.channel_1_triggered = true;
+        self.dac_check(1);
+        if self.apu.channel_1_length_counter == 0 {
+            self.apu.channel_1_length_counter = MAX_8_LENGTH;
+            if self.apu.channel_1_length_enable && self.apu.channel_1_length_timer == 0 {
+                println!("hitting refill clock!");
+                self.length_unit(1);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+
+        // self.apu.channel_1_sweep_count = 0;
+        // self.apu.channel_1_volume_count = 0;
+        // self.apu
+        //     .channel_1_volume
+        //     .store(self.get_memory(NR12_ADDR, SOURCE) >> 4, Ordering::Relaxed);
+        // let (sweep_shift, sweep_time) = {
+        //     let sweep_reg = self.get_memory(NR10_ADDR, SOURCE);
+        //     (sweep_reg & 0b11, (sweep_reg >> 4) & 0b111)
+        // };
+        // self.apu.channel_1_sweep_enable = !(sweep_shift == 0 || sweep_time == 0);
+        //self.apu.channel_1_length_timer = 0;
+
+        //self.apu.cycle_count_1 = 0;
+    }
     fn channel_1_advance(&mut self) {
-        let initialize = (self.mem_unit.get_memory(NR14_ADDR, SOURCE) >> 7) == 1;
-        let mut length = MAX_8_LENGTH - (self.mem_unit.get_memory(NR11_ADDR, SOURCE) & 0b111111);
+        let initialize = (self.get_memory(NR14_ADDR, SOURCE) >> 7) == 1;
 
         self.apu
             .channel_1_so1_enable
@@ -621,227 +727,277 @@ impl GameBoyEmulator {
         self.apu
             .channel_1_so2_enable
             .store((self.apu.nr51_data >> 4) & 1, Ordering::Relaxed);
-        if initialize {
-            if length == 0 {
-                length = MAX_8_LENGTH;
-            }
-            self.apu.channel_1_enable.store(true, Ordering::Relaxed);
-            self.mem_unit.write_memory(
-                NR52_ADDR,
-                self.mem_unit.get_memory(NR52_ADDR, SOURCE) | 1,
-                SOURCE,
-            );
-            self.apu.channel_1_sweep_count = 0;
-            self.apu.channel_1_volume_count = 0;
-            self.apu.channel_1_volume.store(
-                self.mem_unit.get_memory(NR12_ADDR, SOURCE) >> 4,
-                Ordering::Relaxed,
-            );
-            let (sweep_shift, sweep_time) = {
-                let sweep_reg = self.mem_unit.get_memory(NR10_ADDR, SOURCE);
-                (sweep_reg & 0b11, sweep_reg >> 4)
-            };
-            self.apu.channel_1_sweep_enable = !(sweep_shift == 0 || sweep_time == 0);
-            self.apu.cycle_count_1 = 0;
-            self.mem_unit.write_memory(
-                NR14_ADDR,
-                self.mem_unit.get_memory(NR14_ADDR, SOURCE) & 0b01111111,
-                SOURCE,
-            );
+        let prev_length_enable_status = self.apu.channel_1_length_enable;
+        if self.apu.channel_1_triggered {
+            self.apu.channel_1_triggered = false;
+            return;
         }
-        if self.apu.channel_1_enable.load(Ordering::Relaxed) {
-            *self.apu.channel_1_duty.lock().unwrap() = DUTY_CONVERSION
-                [((self.mem_unit.get_memory(NR11_ADDR, SOURCE) >> 6) & 0b11) as usize];
-            let mut channel_1_frequency =
-                (((self.mem_unit.get_memory(NR14_ADDR, SOURCE) & 0b111) as u32) << 8)
-                    + self.mem_unit.get_memory(NR13_ADDR, SOURCE) as u32;
+        // self.apu.channel_1_length_enable = (self.get_memory(NR14_ADDR, SOURCE) >> 6) & 1 == 1;
+        // if initialize {
+        //     println!(
+        //         "1 initialized, current length: {}, length clock: {}, length_enable: {}, prev length_enable: {}, iter_count: {}",
+        //         self.apu.channel_1_length_counter,
+        //         self.apu.cycle_count_1 % CYCLE_COUNT_256HZ,
+        //         self.apu.channel_1_length_enable,
+        //         prev_length_enable_status,
+        //         self.iteration_count
+        //     );
 
-            if self.apu.cycle_count_1 % CYCLE_COUNT_128HZ == 0 && self.apu.channel_1_sweep_enable {
-                self.sweep_channel_1(&mut channel_1_frequency);
-            }
-            if self.apu.cycle_count_1 == 0 {
-                self.volume_envelope(1);
-            }
+        //     if self.apu.channel_1_length_counter == 0 {
+        //         self.apu.channel_1_length_counter = MAX_8_LENGTH;
+        //     }
 
-            if self.apu.cycle_count_1 % CYCLE_COUNT_256HZ == 0 {
-                self.length_unit_8(1, &mut length);
-            }
-            self.apu
-                .channel_1_frequency
-                .store(channel_1_frequency, Ordering::Relaxed);
-        }
+        //     self.enable_channel(1);
+        //     self.apu.channel_1_sweep_count = 0;
+        //     self.apu.channel_1_volume_count = 0;
+        //     self.apu
+        //         .channel_1_volume
+        //         .store(self.get_memory(NR12_ADDR, SOURCE) >> 4, Ordering::Relaxed);
+        //     let (sweep_shift, sweep_time) = {
+        //         let sweep_reg = self.get_memory(NR10_ADDR, SOURCE);
+        //         (sweep_reg & 0b11, (sweep_reg >> 4) & 0b111)
+        //     };
+        //     self.apu.channel_1_sweep_enable = !(sweep_shift == 0 || sweep_time == 0);
+        //     self.dac_check(1);
+        //     self.apu.cycle_count_1 = 0;
+        //     self.write_memory(
+        //         NR14_ADDR,
+        //         self.get_memory(NR14_ADDR, SOURCE) & 0b01111111,
+        //         SOURCE,
+        //     );
+
+        //     return;
+        // }
+        self.dac_check(1);
+        // if (self.apu.channel_1_length_timer % CYCLE_COUNT_256HZ == 0)
+        //     && self.apu.channel_1_length_enable
+        //     && self.apu.channel_1_length_counter > 0
+        // {
+        //     self.length_unit(1);
+        // }
+        // if self.apu.channel_1_enable.load(Ordering::Relaxed) {
+        //     *self.apu.channel_1_duty.lock().unwrap() =
+        //         DUTY_CONVERSION[((self.get_memory(NR11_ADDR, SOURCE) >> 6) & 0b11) as usize];
+        //     let mut channel_1_frequency = (((self.get_memory(NR14_ADDR, SOURCE) & 0b111) as u32)
+        //         << 8)
+        //         + self.get_memory(NR13_ADDR, SOURCE) as u32;
+
+        //     if self.apu.cycle_count_1 % CYCLE_COUNT_128HZ == 0 && self.apu.channel_1_sweep_enable {
+        //         self.sweep_channel_1(&mut channel_1_frequency);
+        //     }
+        //     if self.apu.cycle_count_1 == 0 {
+        //         self.volume_envelope(1);
+        //     }
+
+        //     self.apu
+        //         .channel_1_frequency
+        //         .store(channel_1_frequency, Ordering::Relaxed);
+        // }
     }
     fn channel_2_advance(&mut self) {
-        let initialize = (self.mem_unit.get_memory(NR24_ADDR, SOURCE) >> 7) == 1;
-        let mut length = 64 - (self.mem_unit.get_memory(NR21_ADDR, SOURCE) & 0b111111);
+        let initialize = (self.get_memory(NR24_ADDR, SOURCE) >> 7) == 1;
         self.apu
             .channel_2_so1_enable
             .store((self.apu.nr51_data >> 1) & 1, Ordering::Relaxed);
         self.apu
             .channel_2_so2_enable
             .store((self.apu.nr51_data >> 5) & 1, Ordering::Relaxed);
+        self.apu.channel_2_length_enable = (self.get_memory(NR24_ADDR, SOURCE) >> 6) & 1 == 1;
         if initialize {
-            //println!("2 initialize!");
-            if length == 0 {
-                length = MAX_8_LENGTH;
+            let prev_length_enable_status = self.apu.channel_2_length_enable;
+            // println!(
+            //     "2 initialized, current length: {}, length clock: {}, length_enable: {}, prev length_enable: {}, iter_count: {}",
+            //     self.apu.channel_2_length_counter,
+            //     self.apu.cycle_count_2 % CYCLE_COUNT_256HZ,
+            //     self.apu.channel_2_length_enable,
+            //     prev_length_enable_status,
+            //     self.iteration_count
+            // );
+            if self.apu.channel_2_length_counter == 0 {
+                self.apu.channel_2_length_counter = MAX_8_LENGTH;
             }
-            self.apu.channel_2_enable.store(true, Ordering::Relaxed);
-            self.mem_unit.write_memory(
-                NR52_ADDR,
-                self.mem_unit.get_memory(NR52_ADDR, SOURCE) | 0b10,
-                SOURCE,
-            );
+            self.enable_channel(2);
             self.apu.channel_2_volume_count = 0;
-            self.apu.channel_2_volume.store(
-                self.mem_unit.get_memory(NR22_ADDR, SOURCE) >> 4,
-                Ordering::Relaxed,
-            );
-            self.mem_unit.write_memory(
+            self.apu
+                .channel_2_volume
+                .store(self.get_memory(NR22_ADDR, SOURCE) >> 4, Ordering::Relaxed);
+            self.write_memory(
                 NR24_ADDR,
-                self.mem_unit.get_memory(NR24_ADDR, SOURCE) & 0b01111111,
+                self.get_memory(NR24_ADDR, SOURCE) & 0b01111111,
                 SOURCE,
             );
             self.apu.cycle_count_2 = 0;
+            return;
         }
-        *self.apu.channel_2_duty.lock().unwrap() =
-            DUTY_CONVERSION[((self.mem_unit.get_memory(NR21_ADDR, SOURCE) >> 6) & 0b11) as usize];
-        self.apu.channel_2_frequency.store(
-            (((self.mem_unit.get_memory(NR24_ADDR, SOURCE) & 0b111) as u32) << 8)
-                + self.mem_unit.get_memory(NR23_ADDR, SOURCE) as u32,
-            Ordering::Relaxed,
-        );
+        self.dac_check(2);
+        // if self.apu.cycle_count_2 % CYCLE_COUNT_256HZ == 0
+        //     && self.apu.channel_2_length_enable
+        //     && self.apu.channel_2_length_counter > 0
+        // {
+        //     self.length_unit(2);
+        // }
+        // if self.apu.channel_2_enable.load(Ordering::Relaxed) {
+        //     *self.apu.channel_2_duty.lock().unwrap() =
+        //         DUTY_CONVERSION[((self.get_memory(NR21_ADDR, SOURCE) >> 6) & 0b11) as usize];
+        //     self.apu.channel_2_frequency.store(
+        //         (((self.get_memory(NR24_ADDR, SOURCE) & 0b111) as u32) << 8)
+        //             + self.get_memory(NR23_ADDR, SOURCE) as u32,
+        //         Ordering::Relaxed,
+        //     );
 
-        if self.apu.cycle_count_2 == 0 {
-            self.volume_envelope(2);
-        }
-
-        if self.apu.cycle_count_2 % CYCLE_COUNT_256HZ == 0 {
-            self.length_unit_8(2, &mut length);
-        }
+        //     if self.apu.cycle_count_2 == 0 {
+        //         self.volume_envelope(2);
+        //     }
+        // }
     }
 
     fn channel_3_advance(&mut self) {
-        let initialize = (self.mem_unit.get_memory(NR34_ADDR, SOURCE) >> 7) == 1;
-        let mut length = MAX_16_LENGTH - self.mem_unit.get_memory(NR31_ADDR, SOURCE) as u16;
+        let initialize = (self.get_memory(NR34_ADDR, SOURCE) >> 7) == 1;
         self.apu
             .channel_3_so1_enable
             .store((self.apu.nr51_data >> 2) & 1, Ordering::Relaxed);
         self.apu
             .channel_3_so2_enable
             .store((self.apu.nr51_data >> 6) & 1, Ordering::Relaxed);
+        self.apu.channel_3_length_enable = (self.get_memory(NR34_ADDR, SOURCE) >> 6) & 1 == 1;
         if initialize {
-            //println!("3 initialize!");
-            if length == 0 {
-                length = MAX_16_LENGTH;
+            let prev_length_enable_status = self.apu.channel_2_length_enable;
+            // println!(
+            //     "3 initialized, current length: {}, length clock: {}, length_enable: {}, prev length_enable: {}, iter_count: {}",
+            //     self.apu.channel_3_length_counter,
+            //     self.apu.cycle_count_3 % CYCLE_COUNT_256HZ,
+            //     self.apu.channel_3_length_enable,
+            //     prev_length_enable_status,
+            //     self.iteration_count
+            // );
+            if self.apu.channel_3_length_counter == 0 {
+                self.apu.channel_3_length_counter = MAX_16_LENGTH;
             }
             self.apu.cycle_count_3 = 0;
             self.apu.channel_3_pointer.store(0, Ordering::Relaxed);
-            self.mem_unit.write_memory(
+            self.write_memory(
                 NR34_ADDR,
-                self.mem_unit.get_memory(NR34_ADDR, SOURCE) & 0b01111111,
+                self.get_memory(NR34_ADDR, SOURCE) & 0b01111111,
                 SOURCE,
             );
-            self.apu.channel_3_enable.store(true, Ordering::Relaxed);
-            self.mem_unit.write_memory(
-                NR52_ADDR,
-                self.mem_unit.get_memory(NR52_ADDR, SOURCE) | 0b100,
-                SOURCE,
+            self.enable_channel(3);
+
+            return;
+        }
+        if self.get_memory(NR30_ADDR, SOURCE) >> 7 == 0 {
+            self.disable_channel(3);
+        }
+        if (self.apu.cycle_count_3 % CYCLE_COUNT_256HZ == 0)
+            && self.apu.channel_3_length_enable
+            && self.apu.channel_3_length_counter > 0
+        {
+            self.length_unit(3);
+        }
+        if self.apu.channel_3_enable.load(Ordering::Relaxed) {
+            *self.apu.wave_ram.lock().unwrap() = self.get_wave_ram();
+            self.apu.channel_3_output_level.store(
+                VOLUME_SHIFT_CONVERSION
+                    [((self.get_memory(NR32_ADDR, SOURCE) >> 5) & 0b11) as usize],
+                Ordering::Relaxed,
             );
-        }
-        if self.mem_unit.get_memory(NR30_ADDR, SOURCE) >> 7 == 0 {
-            self.apu.channel_3_enable.store(false, Ordering::Relaxed);
-        }
-        *self.apu.wave_ram.lock().unwrap() = self.mem_unit.get_wave_ram();
-        self.apu.channel_3_output_level.store(
-            self.mem_unit.get_memory(NR32_ADDR, SOURCE),
-            Ordering::Relaxed,
-        );
-        self.apu.channel_3_frequency.store(
-            (((self.mem_unit.get_memory(NR34_ADDR, SOURCE) & 0b111) as u32) << 8)
-                + self.mem_unit.get_memory(NR33_ADDR, SOURCE) as u32,
-            Ordering::Relaxed,
-        );
-        if self.apu.cycle_count_3 % 16384 == 0 {
-            self.length_unit_16(&mut length);
+            self.apu.channel_3_frequency.store(
+                (((self.get_memory(NR34_ADDR, SOURCE) & 0b111) as u32) << 8)
+                    + self.get_memory(NR33_ADDR, SOURCE) as u32,
+                Ordering::Relaxed,
+            );
         }
     }
     fn channel_4_advance(&mut self) {
-        let initialize = (self.mem_unit.get_memory(NR44_ADDR, SOURCE) >> 7) == 1;
-        let mut length = 64 - (self.mem_unit.get_memory(NR41_ADDR, SOURCE) & 0b11111);
+        let initialize = (self.get_memory(NR44_ADDR, SOURCE) >> 7) == 1;
         self.apu
             .channel_4_so1_enable
             .store((self.apu.nr51_data >> 3) & 1, Ordering::Relaxed);
         self.apu
             .channel_4_so2_enable
             .store((self.apu.nr51_data >> 7) & 1, Ordering::Relaxed);
+        self.apu.channel_4_length_enable = (self.get_memory(NR44_ADDR, SOURCE) >> 6) & 1 == 1;
         if initialize {
-            //println!("4 initialize!");
-            if length == 0 {
-                length = MAX_8_LENGTH;
+            if self.apu.channel_4_length_counter == 0 {
+                self.apu.channel_4_length_counter = MAX_8_LENGTH;
             }
-            self.mem_unit.write_memory(
+            self.write_memory(
                 NR44_ADDR,
-                self.mem_unit.get_memory(NR44_ADDR, SOURCE) & 0b01111111,
+                self.get_memory(NR44_ADDR, SOURCE) & 0b01111111,
                 SOURCE,
             );
             self.apu.channel_4_volume_count = 0;
-            self.apu.channel_4_volume.store(
-                self.mem_unit.get_memory(NR42_ADDR, SOURCE) >> 4,
-                Ordering::Relaxed,
-            );
+            self.apu
+                .channel_4_volume
+                .store(self.get_memory(NR42_ADDR, SOURCE) >> 4, Ordering::Relaxed);
             self.apu.channel_4_lsfr.store(0x7FFF, Ordering::Relaxed);
-            self.apu.channel_4_enable.store(true, Ordering::Relaxed);
-            self.mem_unit.write_memory(
-                NR52_ADDR,
-                self.mem_unit.get_memory(NR52_ADDR, SOURCE) | 0b1000,
-                SOURCE,
-            );
+            self.enable_channel(4);
             self.apu.cycle_count_4 = 0;
+            return;
         }
-        let poly_counter_reg = self.mem_unit.get_memory(NR43_ADDR, SOURCE);
-        self.apu
-            .channel_4_width
-            .store(((poly_counter_reg >> 3) & 1) == 1, Ordering::Relaxed);
-        let new_freq = {
-            let shift_clock_freq = poly_counter_reg >> 4;
-            let possible_ratio = poly_counter_reg & 0b111;
-            let s_factor: u32 = 1 << (shift_clock_freq + 4);
-            if possible_ratio == 0 {
-                s_factor >> 1
-            } else {
-                s_factor * possible_ratio as u32
+        self.dac_check(4);
+        if (self.apu.cycle_count_4 % CYCLE_COUNT_256HZ == 0)
+            && self.apu.channel_4_length_enable
+            && self.apu.channel_4_length_counter > 0
+        {
+            self.length_unit(4);
+        }
+        if self.apu.channel_4_enable.load(Ordering::Relaxed) {
+            let poly_counter_reg = self.get_memory(NR43_ADDR, SOURCE);
+            self.apu
+                .channel_4_width
+                .store(((poly_counter_reg >> 3) & 1) == 1, Ordering::Relaxed);
+            let new_freq = {
+                let shift_clock_freq = poly_counter_reg >> 4;
+                let possible_ratio = poly_counter_reg & 0b111;
+                let s_factor: u32 = 1 << (shift_clock_freq + 4);
+                if possible_ratio == 0 {
+                    s_factor >> 1
+                } else {
+                    s_factor * possible_ratio as u32
+                }
+            };
+            self.apu
+                .channel_4_frequency
+                .store(new_freq, Ordering::Relaxed);
+            if self.apu.cycle_count_4 == 0 {
+                self.volume_envelope(4);
             }
-        };
-        self.apu
-            .channel_4_frequency
-            .store(new_freq, Ordering::Relaxed);
-        if self.apu.cycle_count_4 == 0 {
-            self.volume_envelope(4);
-        }
-
-        if self.apu.cycle_count_4 % CYCLE_COUNT_256HZ == 0 {
-            self.length_unit_8(4, &mut length);
         }
     }
     pub fn apu_advance(&mut self) {
-        self.apu.nr51_data = self.mem_unit.get_memory(NR51_ADDR, SOURCE);
+        self.apu.nr51_data = self.get_memory(NR51_ADDR, SOURCE);
         self.apu
             .so1_level_swl
-            .set(((self.mem_unit.get_memory(NR50_ADDR, SOURCE) >> 4) & 0b11) as f32 / 7.0);
+            .set(((self.get_memory(NR50_ADDR, SOURCE) >> 4) & 0b11) as f32 / 7.0);
         self.apu
             .so2_level_swl
-            .set((self.mem_unit.get_memory(NR50_ADDR, SOURCE) & 0b11) as f32 / 7.0);
+            .set((self.get_memory(NR50_ADDR, SOURCE) & 0b11) as f32 / 7.0);
         self.apu.all_sound_enable.store(
-            (self.mem_unit.get_memory(NR52_ADDR, SOURCE) >> 7) == 1,
+            (self.get_memory(NR52_ADDR, SOURCE) >> 7) == 1,
             Ordering::Relaxed,
         );
         self.channel_1_advance();
         self.channel_2_advance();
         self.channel_3_advance();
         self.channel_4_advance();
-        self.apu.cycle_count_1 = (self.apu.cycle_count_1 + ADVANCE_CYCLES) % CYCLE_COUNT_512HZ;
-        self.apu.cycle_count_2 = (self.apu.cycle_count_2 + ADVANCE_CYCLES) % CYCLE_COUNT_512HZ;
-        self.apu.cycle_count_3 = (self.apu.cycle_count_3 + ADVANCE_CYCLES) % CYCLE_COUNT_512HZ;
-        self.apu.cycle_count_4 = (self.apu.cycle_count_4 + ADVANCE_CYCLES) % CYCLE_COUNT_512HZ;
+        self.apu.cycle_count_1 = (self.apu.cycle_count_1 + ADVANCE_CYCLES) % CYCLE_COUNT_64HZ;
+        self.apu.cycle_count_2 = (self.apu.cycle_count_2 + ADVANCE_CYCLES) % CYCLE_COUNT_64HZ;
+        self.apu.cycle_count_3 = (self.apu.cycle_count_3 + ADVANCE_CYCLES) % CYCLE_COUNT_64HZ;
+        self.apu.cycle_count_4 = (self.apu.cycle_count_4 + ADVANCE_CYCLES) % CYCLE_COUNT_64HZ;
+        if (self.apu.cycle_count_1 % CYCLE_COUNT_512HZ) == 0 {
+            self.apu.channel_1_length_timer = (self.apu.channel_1_length_timer + 1) % 2;
+            if self.apu.channel_1_length_timer == 0
+                && self.apu.channel_1_length_enable
+                && self.apu.channel_1_length_counter > 0
+            {
+                self.length_unit(1);
+            }
+            if self.apu.channel_1_length_timer == 0
+                && self.apu.channel_2_length_enable
+                && self.apu.channel_2_length_counter > 0
+            {
+                self.length_unit(2);
+            }
+        }
     }
 }

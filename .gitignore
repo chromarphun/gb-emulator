@@ -15,3 +15,4 @@ Cargo.lock
 /target
 
 /src/commands.log
+/example_roms/
