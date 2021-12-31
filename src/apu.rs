@@ -208,11 +208,12 @@ impl AudioCallback for Channel4 {
 
 pub struct AudioProcessingUnit {
     _audio_subsystem: AudioSubsystem,
+    pub length_counters: [u16; 4],
+    length_enables: [bool; 4],
     channel_1_frequency: Arc<AtomicU32>,
     channel_2_frequency: Arc<AtomicU32>,
     channel_1_sweep_count: u8,
     channel_1_sweep_enable: bool,
-    channel_1_length_enable: bool,
     cycle_count_1: u32,
     cycle_count_2: u32,
     cycle_count_3: u32,
@@ -227,9 +228,7 @@ pub struct AudioProcessingUnit {
     channel_1_duty: Arc<Mutex<f32>>,
     channel_1_so1_enable: Arc<AtomicU8>,
     channel_1_so2_enable: Arc<AtomicU8>,
-    pub channel_1_length_counter: u16,
-    channel_1_triggered: bool,
-    channel_1_length_timer: u32,
+    length_timer: u32,
 
     channel_2_enable: Arc<AtomicBool>,
     channel_2_volume: Arc<AtomicU8>,
@@ -237,8 +236,6 @@ pub struct AudioProcessingUnit {
     channel_2_duty: Arc<Mutex<f32>>,
     channel_2_so1_enable: Arc<AtomicU8>,
     channel_2_so2_enable: Arc<AtomicU8>,
-    channel_2_length_enable: bool,
-    pub channel_2_length_counter: u16,
 
     channel_3_pointer: Arc<AtomicUsize>,
     channel_3_enable: Arc<AtomicBool>,
@@ -246,8 +243,6 @@ pub struct AudioProcessingUnit {
     channel_3_output_level: Arc<AtomicU8>,
     channel_3_so1_enable: Arc<AtomicU8>,
     channel_3_so2_enable: Arc<AtomicU8>,
-    channel_3_length_enable: bool,
-    pub channel_3_length_counter: u16,
 
     wave_ram: Arc<Mutex<[u8; 16]>>,
     channel_4_volume_count: u8,
@@ -258,8 +253,6 @@ pub struct AudioProcessingUnit {
     channel_4_volume: Arc<AtomicU8>,
     channel_4_so1_enable: Arc<AtomicU8>,
     channel_4_so2_enable: Arc<AtomicU8>,
-    channel_4_length_enable: bool,
-    pub channel_4_length_counter: u16,
 
     _channel_1_device: AudioDevice<Channel1>,
     _channel_2_device: AudioDevice<Channel2>,
@@ -436,6 +429,8 @@ impl AudioProcessingUnit {
         channel_4_device.resume();
         AudioProcessingUnit {
             _audio_subsystem: audio_subsystem,
+            length_counters: [0; 4],
+            length_enables: [false; 4],
             channel_1_frequency,
             channel_2_frequency,
             cycle_count_1,
@@ -454,26 +449,22 @@ impl AudioProcessingUnit {
             channel_1_duty,
             channel_1_so1_enable,
             channel_1_so2_enable,
-            channel_1_length_enable: false,
-            channel_1_length_counter: 0,
-            channel_1_triggered: false,
-            channel_1_length_timer: 0,
+
+            length_timer: 0,
             channel_2_enable,
             channel_2_volume,
             channel_2_volume_count,
             channel_2_duty,
             channel_2_so1_enable,
             channel_2_so2_enable,
-            channel_2_length_enable: false,
-            channel_2_length_counter: 0,
+
             channel_3_pointer,
             channel_3_enable,
             channel_3_frequency,
             channel_3_output_level,
             channel_3_so1_enable,
             channel_3_so2_enable,
-            channel_3_length_enable: false,
-            channel_3_length_counter: 0,
+
             wave_ram,
             channel_4_volume_count,
             channel_4_lsfr,
@@ -483,8 +474,7 @@ impl AudioProcessingUnit {
             channel_4_volume,
             channel_4_so1_enable,
             channel_4_so2_enable,
-            channel_4_length_enable: false,
-            channel_4_length_counter: 0,
+
             _channel_1_device: channel_1_device,
             _channel_2_device: channel_2_device,
             _channel_3_device: channel_3_device,
@@ -493,7 +483,7 @@ impl AudioProcessingUnit {
     }
 }
 impl GameBoyEmulator {
-    fn disable_channel(&mut self, channel: u8) {
+    fn disable_channel(&mut self, channel: usize) {
         let (enable_channel, mask) = match channel {
             1 => (&self.apu.channel_1_enable, 0b11111110),
             2 => (&self.apu.channel_2_enable, 0b11111101),
@@ -506,7 +496,7 @@ impl GameBoyEmulator {
         (*enable_channel).store(false, Ordering::Relaxed);
         self.write_memory(NR52_ADDR, self.get_memory(NR52_ADDR, SOURCE) & mask, SOURCE);
     }
-    fn enable_channel(&mut self, channel: u8) {
+    fn enable_channel(&mut self, channel: usize) {
         let (enable_channel, mask) = match channel {
             1 => (&self.apu.channel_1_enable, 0b00000001),
             2 => (&self.apu.channel_2_enable, 0b00000010),
@@ -591,27 +581,19 @@ impl GameBoyEmulator {
             self.apu.channel_1_sweep_count = std::cmp::min(self.apu.channel_1_sweep_count + 1, 254);
         }
     }
-    fn length_unit(&mut self, channel: u8) {
-        let length = match channel {
-            1 => &mut self.apu.channel_1_length_counter,
-            2 => &mut self.apu.channel_2_length_counter,
-            3 => &mut self.apu.channel_3_length_counter,
-            4 => &mut self.apu.channel_4_length_counter,
-            _ => {
-                panic!("AHHHHHHHHHHH");
-            }
-        };
-
-        *length -= 1;
+    fn length_unit(&mut self, channel: usize) {
+        self.apu.length_counters[channel - 1] -= 1;
         println!(
             "dropping length to {} for {} at {}",
-            *length, channel, self.iteration_count
+            self.apu.length_counters[channel - 1],
+            channel,
+            self.iteration_count
         );
-        if *length == 0 {
+        if self.apu.length_counters[channel - 1] == 0 {
             self.disable_channel(channel);
         }
     }
-    fn dac_check(&mut self, channel: u8) {
+    fn dac_check(&mut self, channel: usize) {
         let vol_env_addr = match channel {
             1 => NR12_ADDR,
             2 => NR22_ADDR,
@@ -626,46 +608,54 @@ impl GameBoyEmulator {
             self.disable_channel(channel);
         }
     }
-    pub fn nrx4_write(&mut self, channel: u8, val: u8) {
+    pub fn nrx4_write(&mut self, channel: usize, val: u8) {
         // let (length_enable, cycle_count, length) = match channel {
         //     1 => (
         //         &mut self.apu.channel_1_length_enable,
         //         self.apu.cycle_count_1,
-        //         &mut self.apu.channel_1_length_counter,
+        //         &mut self.apu.length_counters[CH1_IND],
         //     ),
         //     2 => (
         //         &mut self.apu.channel_2_length_enable,
         //         self.apu.cycle_count_2,
-        //         &mut self.apu.channel_2_length_counter,
+        //         &mut self.apu.length_counters[CH2_IND],
         //     ),
         //     3 => (
         //         &mut self.apu.channel_3_length_enable,
         //         self.apu.cycle_count_3,
-        //         &mut self.apu.channel_3_length_counter,
+        //         &mut self.apu.length_counters[CH3_IND],
         //     ),
         //     4 => (
         //         &mut self.apu.channel_4_length_enable,
         //         self.apu.cycle_count_4,
-        //         &mut self.apu.channel_4_length_counter,
+        //         &mut self.apu.length_counters[CH4_IND],
         //     ),
         //     _ => panic!("Invalid channel for nrx4 write"),
         // };
-        let old_enable = self.apu.channel_1_length_enable;
-        self.apu.channel_1_length_enable = (val >> 6) & 1 == 1;
+        let old_enable = self.apu.length_enables[channel - 1];
+        self.apu.length_enables[channel - 1] = (val >> 6) & 1 == 1;
 
         let trigger = (val >> 7) & 1 == 1;
-        let refill = if trigger && channel == 1 {
-            self.trigger_channel_1()
+        let refill = if trigger {
+            match channel {
+                1 => self.trigger_channel_1(),
+                2 => self.trigger_channel_2(),
+                3 => self.trigger_channel_3(),
+                4 => self.trigger_channel_4(),
+                _ => {
+                    panic!("bad channel!")
+                }
+            }
         } else {
             false
         };
-        if old_enable != self.apu.channel_1_length_enable && channel == 1 {
-            println!("length is now {}", self.apu.channel_1_length_enable);
+        if old_enable != self.apu.length_enables[channel - 1] {
+            println!("length is now {}", self.apu.length_enables[channel - 1]);
         }
         if !old_enable
-            && self.apu.channel_1_length_enable
-            && (self.apu.channel_1_length_timer == 0)
-            && self.apu.channel_1_length_counter > 0
+            && self.apu.length_enables[channel - 1]
+            && (self.apu.length_timer == 0)
+            && self.apu.length_counters[channel - 1] > 0
             && !refill
         {
             println!("extra length!");
@@ -674,28 +664,23 @@ impl GameBoyEmulator {
             println!(
                 "Extra length failed, old enable is {}, new enable is {}, cycle condition is {}",
                 old_enable,
-                self.apu.channel_1_length_enable,
-                (self.apu.channel_1_length_timer == 0)
+                self.apu.length_enables[channel - 1],
+                (self.apu.length_timer == 0)
             );
         }
         println!("=====")
     }
-    fn trigger_channel_1(&mut self) -> bool {
-        println!(
-            "1 initialized, current length: {}, length clock: {}, length_enable: {}, iter_count: {}",
-            self.apu.channel_1_length_counter,
-            self.apu.cycle_count_1 % CYCLE_COUNT_256HZ,
-            self.apu.channel_1_length_enable,
-            self.iteration_count
-        );
-        self.enable_channel(1);
-        self.apu.channel_1_triggered = true;
-        self.dac_check(1);
-        if self.apu.channel_1_length_counter == 0 {
-            self.apu.channel_1_length_counter = MAX_8_LENGTH;
-            if self.apu.channel_1_length_enable && self.apu.channel_1_length_timer == 0 {
+    fn refill_check(&mut self, channel: usize) -> bool {
+        let max_length = if channel == 3 {
+            MAX_16_LENGTH
+        } else {
+            MAX_8_LENGTH
+        };
+        if self.apu.length_counters[channel - 1] == 0 {
+            self.apu.length_counters[channel - 1] = max_length;
+            if self.apu.length_enables[channel - 1] && self.apu.length_timer == 0 {
                 println!("hitting refill clock!");
-                self.length_unit(1);
+                self.length_unit(channel);
                 true
             } else {
                 false
@@ -703,6 +688,18 @@ impl GameBoyEmulator {
         } else {
             false
         }
+    }
+    fn trigger_channel_1(&mut self) -> bool {
+        println!(
+            "1 initialized, current length: {}, length clock: {}, length_enable: {}, iter_count: {}",
+            self.apu.length_counters[CH1_IND],
+            self.apu.cycle_count_1 % CYCLE_COUNT_256HZ,
+            self.apu.length_enables[CH1_IND],
+            self.iteration_count
+        );
+        self.enable_channel(1);
+        self.dac_check(1);
+        self.refill_check(1)
 
         // self.apu.channel_1_sweep_count = 0;
         // self.apu.channel_1_volume_count = 0;
@@ -718,33 +715,54 @@ impl GameBoyEmulator {
 
         //self.apu.cycle_count_1 = 0;
     }
-    fn channel_1_advance(&mut self) {
-        let initialize = (self.get_memory(NR14_ADDR, SOURCE) >> 7) == 1;
 
+    fn trigger_channel_2(&mut self) -> bool {
+        println!(
+            "2 initialized, current length: {}, length clock: {}, length_enable: {}, iter_count: {}",
+            self.apu.length_counters[CH2_IND],
+            self.apu.cycle_count_1 % CYCLE_COUNT_256HZ,
+            self.apu.length_enables[CH2_IND],
+            self.iteration_count
+        );
+        self.enable_channel(2);
+        self.dac_check(2);
+        self.refill_check(2)
+    }
+    fn trigger_channel_3(&mut self) -> bool {
+        self.apu.cycle_count_3 = 0;
+        self.apu.channel_3_pointer.store(0, Ordering::Relaxed);
+        self.enable_channel(3);
+        self.refill_check(3)
+    }
+    fn trigger_channel_4(&mut self) -> bool {
+        self.apu.channel_4_volume_count = 0;
+        self.apu
+            .channel_4_volume
+            .store(self.get_memory(NR42_ADDR, SOURCE) >> 4, Ordering::Relaxed);
+        self.apu.channel_4_lsfr.store(0x7FFF, Ordering::Relaxed);
+        self.enable_channel(4);
+        self.refill_check(4)
+    }
+    fn channel_1_advance(&mut self) {
         self.apu
             .channel_1_so1_enable
             .store(self.apu.nr51_data & 1, Ordering::Relaxed);
         self.apu
             .channel_1_so2_enable
             .store((self.apu.nr51_data >> 4) & 1, Ordering::Relaxed);
-        let prev_length_enable_status = self.apu.channel_1_length_enable;
-        if self.apu.channel_1_triggered {
-            self.apu.channel_1_triggered = false;
-            return;
-        }
         // self.apu.channel_1_length_enable = (self.get_memory(NR14_ADDR, SOURCE) >> 6) & 1 == 1;
         // if initialize {
         //     println!(
         //         "1 initialized, current length: {}, length clock: {}, length_enable: {}, prev length_enable: {}, iter_count: {}",
-        //         self.apu.channel_1_length_counter,
+        //         self.apu.length_counters[CH1_IND],
         //         self.apu.cycle_count_1 % CYCLE_COUNT_256HZ,
         //         self.apu.channel_1_length_enable,
         //         prev_length_enable_status,
         //         self.iteration_count
         //     );
 
-        //     if self.apu.channel_1_length_counter == 0 {
-        //         self.apu.channel_1_length_counter = MAX_8_LENGTH;
+        //     if self.apu.length_counters[CH1_IND] == 0 {
+        //         self.apu.length_counters[CH1_IND] = MAX_8_LENGTH;
         //     }
 
         //     self.enable_channel(1);
@@ -771,7 +789,7 @@ impl GameBoyEmulator {
         self.dac_check(1);
         // if (self.apu.channel_1_length_timer % CYCLE_COUNT_256HZ == 0)
         //     && self.apu.channel_1_length_enable
-        //     && self.apu.channel_1_length_counter > 0
+        //     && self.apu.length_counters[CH1_IND] > 0
         // {
         //     self.length_unit(1);
         // }
@@ -795,44 +813,42 @@ impl GameBoyEmulator {
         // }
     }
     fn channel_2_advance(&mut self) {
-        let initialize = (self.get_memory(NR24_ADDR, SOURCE) >> 7) == 1;
         self.apu
             .channel_2_so1_enable
             .store((self.apu.nr51_data >> 1) & 1, Ordering::Relaxed);
         self.apu
             .channel_2_so2_enable
             .store((self.apu.nr51_data >> 5) & 1, Ordering::Relaxed);
-        self.apu.channel_2_length_enable = (self.get_memory(NR24_ADDR, SOURCE) >> 6) & 1 == 1;
-        if initialize {
-            let prev_length_enable_status = self.apu.channel_2_length_enable;
-            // println!(
-            //     "2 initialized, current length: {}, length clock: {}, length_enable: {}, prev length_enable: {}, iter_count: {}",
-            //     self.apu.channel_2_length_counter,
-            //     self.apu.cycle_count_2 % CYCLE_COUNT_256HZ,
-            //     self.apu.channel_2_length_enable,
-            //     prev_length_enable_status,
-            //     self.iteration_count
-            // );
-            if self.apu.channel_2_length_counter == 0 {
-                self.apu.channel_2_length_counter = MAX_8_LENGTH;
-            }
-            self.enable_channel(2);
-            self.apu.channel_2_volume_count = 0;
-            self.apu
-                .channel_2_volume
-                .store(self.get_memory(NR22_ADDR, SOURCE) >> 4, Ordering::Relaxed);
-            self.write_memory(
-                NR24_ADDR,
-                self.get_memory(NR24_ADDR, SOURCE) & 0b01111111,
-                SOURCE,
-            );
-            self.apu.cycle_count_2 = 0;
-            return;
-        }
+        // if initialize {
+        //     let prev_length_enable_status = self.apu.channel_2_length_enable;
+        //     // println!(
+        //     //     "2 initialized, current length: {}, length clock: {}, length_enable: {}, prev length_enable: {}, iter_count: {}",
+        //     //     self.apu.length_counters[CH2_IND],
+        //     //     self.apu.cycle_count_2 % CYCLE_COUNT_256HZ,
+        //     //     self.apu.channel_2_length_enable,
+        //     //     prev_length_enable_status,
+        //     //     self.iteration_count
+        //     // );
+        //     if self.apu.length_counters[CH2_IND] == 0 {
+        //         self.apu.length_counters[CH2_IND] = MAX_8_LENGTH;
+        //     }
+        //     self.enable_channel(2);
+        //     self.apu.channel_2_volume_count = 0;
+        //     self.apu
+        //         .channel_2_volume
+        //         .store(self.get_memory(NR22_ADDR, SOURCE) >> 4, Ordering::Relaxed);
+        //     self.write_memory(
+        //         NR24_ADDR,
+        //         self.get_memory(NR24_ADDR, SOURCE) & 0b01111111,
+        //         SOURCE,
+        //     );
+        //     self.apu.cycle_count_2 = 0;
+        //     return;
+        //}
         self.dac_check(2);
         // if self.apu.cycle_count_2 % CYCLE_COUNT_256HZ == 0
         //     && self.apu.channel_2_length_enable
-        //     && self.apu.channel_2_length_counter > 0
+        //     && self.apu.length_counters[CH2_IND] > 0
         // {
         //     self.length_unit(2);
         // }
@@ -852,46 +868,14 @@ impl GameBoyEmulator {
     }
 
     fn channel_3_advance(&mut self) {
-        let initialize = (self.get_memory(NR34_ADDR, SOURCE) >> 7) == 1;
         self.apu
             .channel_3_so1_enable
             .store((self.apu.nr51_data >> 2) & 1, Ordering::Relaxed);
         self.apu
             .channel_3_so2_enable
             .store((self.apu.nr51_data >> 6) & 1, Ordering::Relaxed);
-        self.apu.channel_3_length_enable = (self.get_memory(NR34_ADDR, SOURCE) >> 6) & 1 == 1;
-        if initialize {
-            let prev_length_enable_status = self.apu.channel_2_length_enable;
-            // println!(
-            //     "3 initialized, current length: {}, length clock: {}, length_enable: {}, prev length_enable: {}, iter_count: {}",
-            //     self.apu.channel_3_length_counter,
-            //     self.apu.cycle_count_3 % CYCLE_COUNT_256HZ,
-            //     self.apu.channel_3_length_enable,
-            //     prev_length_enable_status,
-            //     self.iteration_count
-            // );
-            if self.apu.channel_3_length_counter == 0 {
-                self.apu.channel_3_length_counter = MAX_16_LENGTH;
-            }
-            self.apu.cycle_count_3 = 0;
-            self.apu.channel_3_pointer.store(0, Ordering::Relaxed);
-            self.write_memory(
-                NR34_ADDR,
-                self.get_memory(NR34_ADDR, SOURCE) & 0b01111111,
-                SOURCE,
-            );
-            self.enable_channel(3);
-
-            return;
-        }
         if self.get_memory(NR30_ADDR, SOURCE) >> 7 == 0 {
             self.disable_channel(3);
-        }
-        if (self.apu.cycle_count_3 % CYCLE_COUNT_256HZ == 0)
-            && self.apu.channel_3_length_enable
-            && self.apu.channel_3_length_counter > 0
-        {
-            self.length_unit(3);
         }
         if self.apu.channel_3_enable.load(Ordering::Relaxed) {
             *self.apu.wave_ram.lock().unwrap() = self.get_wave_ram();
@@ -908,39 +892,13 @@ impl GameBoyEmulator {
         }
     }
     fn channel_4_advance(&mut self) {
-        let initialize = (self.get_memory(NR44_ADDR, SOURCE) >> 7) == 1;
         self.apu
             .channel_4_so1_enable
             .store((self.apu.nr51_data >> 3) & 1, Ordering::Relaxed);
         self.apu
             .channel_4_so2_enable
             .store((self.apu.nr51_data >> 7) & 1, Ordering::Relaxed);
-        self.apu.channel_4_length_enable = (self.get_memory(NR44_ADDR, SOURCE) >> 6) & 1 == 1;
-        if initialize {
-            if self.apu.channel_4_length_counter == 0 {
-                self.apu.channel_4_length_counter = MAX_8_LENGTH;
-            }
-            self.write_memory(
-                NR44_ADDR,
-                self.get_memory(NR44_ADDR, SOURCE) & 0b01111111,
-                SOURCE,
-            );
-            self.apu.channel_4_volume_count = 0;
-            self.apu
-                .channel_4_volume
-                .store(self.get_memory(NR42_ADDR, SOURCE) >> 4, Ordering::Relaxed);
-            self.apu.channel_4_lsfr.store(0x7FFF, Ordering::Relaxed);
-            self.enable_channel(4);
-            self.apu.cycle_count_4 = 0;
-            return;
-        }
         self.dac_check(4);
-        if (self.apu.cycle_count_4 % CYCLE_COUNT_256HZ == 0)
-            && self.apu.channel_4_length_enable
-            && self.apu.channel_4_length_counter > 0
-        {
-            self.length_unit(4);
-        }
         if self.apu.channel_4_enable.load(Ordering::Relaxed) {
             let poly_counter_reg = self.get_memory(NR43_ADDR, SOURCE);
             self.apu
@@ -985,18 +943,20 @@ impl GameBoyEmulator {
         self.apu.cycle_count_3 = (self.apu.cycle_count_3 + ADVANCE_CYCLES) % CYCLE_COUNT_64HZ;
         self.apu.cycle_count_4 = (self.apu.cycle_count_4 + ADVANCE_CYCLES) % CYCLE_COUNT_64HZ;
         if (self.apu.cycle_count_1 % CYCLE_COUNT_512HZ) == 0 {
-            self.apu.channel_1_length_timer = (self.apu.channel_1_length_timer + 1) % 2;
-            if self.apu.channel_1_length_timer == 0
-                && self.apu.channel_1_length_enable
-                && self.apu.channel_1_length_counter > 0
-            {
-                self.length_unit(1);
-            }
-            if self.apu.channel_1_length_timer == 0
-                && self.apu.channel_2_length_enable
-                && self.apu.channel_2_length_counter > 0
-            {
-                self.length_unit(2);
+            self.apu.length_timer = (self.apu.length_timer + 1) % 2;
+            if self.apu.length_timer == 0 {
+                if self.apu.length_enables[CH1_IND] && self.apu.length_counters[CH1_IND] > 0 {
+                    self.length_unit(1);
+                }
+                if self.apu.length_enables[CH2_IND] && self.apu.length_counters[CH2_IND] > 0 {
+                    self.length_unit(2);
+                }
+                if self.apu.length_enables[CH3_IND] && self.apu.length_counters[CH3_IND] > 0 {
+                    self.length_unit(3);
+                }
+                if self.apu.length_enables[CH4_IND] && self.apu.length_counters[CH4_IND] > 0 {
+                    self.length_unit(4);
+                }
             }
         }
     }

@@ -117,6 +117,10 @@ pub const CYCLE_COUNT_64HZ: u32 = 65536;
 pub const CYCLE_COUNT_128HZ: u32 = 32768;
 pub const CYCLE_COUNT_256HZ: u32 = 16384;
 pub const CYCLE_COUNT_512HZ: u32 = 8192;
+pub const CH1_IND: usize = 0;
+pub const CH2_IND: usize = 1;
+pub const CH3_IND: usize = 2;
+pub const CH4_IND: usize = 3;
 
 pub const CYCLE_COUNT_16384HZ: u32 = 256;
 pub const SAMPLE_BUFFER_SIZE: u16 = 128;

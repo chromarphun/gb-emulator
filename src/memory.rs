@@ -568,11 +568,14 @@ impl GameBoyEmulator {
                     }
                 } else if (self.mem_unit.io_registers[0x26] >> 7) == 1 {
                     match addr {
-                        0xFF11 => self.apu.channel_1_length_counter = 64 - (val & 0x3F) as u16,
+                        0xFF11 => self.apu.length_counters[CH1_IND] = 64 - (val & 0x3F) as u16,
                         0xFF14 => self.nrx4_write(1, val),
-                        0xFF16 => self.apu.channel_2_length_counter = 64 - (val & 0x3F) as u16,
-                        0xFF1B => self.apu.channel_3_length_counter = 256 - val as u16,
-                        0xFF20 => self.apu.channel_4_length_counter = 64 - (val & 0x3F) as u16,
+                        0xFF16 => self.apu.length_counters[CH2_IND] = 64 - (val & 0x3F) as u16,
+                        0xFF19 => self.nrx4_write(2, val),
+                        0xFF1B => self.apu.length_counters[CH3_IND] = 256 - val as u16,
+                        0xFF1E => self.nrx4_write(3, val),
+                        0xFF20 => self.apu.length_counters[CH4_IND] = 64 - (val & 0x3F) as u16,
+                        0xFF23 => self.nrx4_write(4, val),
                         _ => {}
                     }
                     self.mem_unit.io_registers[addr - 0xFF00] = val;
