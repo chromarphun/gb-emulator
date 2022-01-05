@@ -33,7 +33,7 @@ impl GameBoyEmulator {
         );
     }
     pub fn timer_advance(&mut self) {
-        let tac = self.get_memory(TAC_ADDR, SOURCE) as usize;
+        let tac = self.get_memory(TAC_ADDR, SOURCE) as usize & 0x7;
         if (tac >> 2) == 1 {
             let clock = TAC_MAPPING[tac & 0b11];
             self.timer.tima_counter = if clock == self.timer.prev_clock {

@@ -41,6 +41,11 @@ pub struct PictureProcessingUnit {
     frame_num: u32,
     frame_index: usize,
     row_colors: Vec<usize>,
+    stat_line: bool,
+    lyc_lc_line: bool,
+    mode_2_line: bool,
+    mode_1_line: bool,
+    mode_0_line: bool,
 }
 
 impl PictureProcessingUnit {
@@ -72,11 +77,40 @@ impl PictureProcessingUnit {
             frame_num: 0,
             frame_index: 0,
             row_colors: vec![0; 160],
+            stat_line: false,
+            lyc_lc_line: false,
+            mode_2_line: false,
+            mode_1_line: false,
+            mode_0_line: false,
         }
     }
 }
 
 impl GameBoyEmulator {
+    fn update_stat_line(&mut self) {
+        let old_line = self.ppu.stat_line;
+        self.ppu.stat_line = (self.ppu.lyc_lc_line && self.get_stat_lyc_lc_int_flag())
+            || (self.ppu.mode_2_line && self.get_stat_oam_int_flag())
+            || (self.ppu.mode_1_line && self.get_stat_vblank_int_flag())
+            || (self.ppu.mode_0_line && self.get_stat_hblank_int_flag());
+        if !old_line && self.ppu.stat_line {
+            self.set_stat_interrupt();
+        }
+    }
+    fn update_ly(&mut self, ly: u8) {
+        self.write_memory(LY_ADDR, ly, SOURCE);
+        self.check_lyc_flag();
+    }
+    pub fn check_lyc_flag(&mut self) {
+        self.ppu.lyc_lc_line =
+            if self.get_memory(LY_ADDR, SOURCE) == self.get_memory(LYC_ADDR, SOURCE) {
+                self.set_stat_lyc_lc_flag();
+                true
+            } else {
+                self.reset_stat_lyc_lc_flag();
+                false
+            };
+    }
     fn get_bg_tile_map_flag(&self) -> u8 {
         (self.get_memory(LCDC_ADDR, SOURCE) >> 3) & 1
     }
@@ -106,29 +140,51 @@ impl GameBoyEmulator {
     fn get_ppu_enable(&self) -> u8 {
         (self.get_memory(LCDC_ADDR, SOURCE) >> 7) & 1
     }
-    fn get_stat_lyc_lc_int_flag(&self) -> u8 {
-        (self.get_memory(STAT_ADDR, SOURCE) >> 6) & 1
+    fn get_stat_lyc_lc_int_flag(&self) -> bool {
+        ((self.get_memory(STAT_ADDR, SOURCE) >> 6) & 1) == 1
     }
-    fn get_stat_oam_int_flag(&self) -> u8 {
-        (self.get_memory(STAT_ADDR, SOURCE) >> 5) & 1
+    fn get_stat_oam_int_flag(&self) -> bool {
+        ((self.get_memory(STAT_ADDR, SOURCE) >> 5) & 1) == 1
     }
-    fn get_stat_vblank_int_flag(&self) -> u8 {
-        (self.get_memory(STAT_ADDR, SOURCE) >> 4) & 1
+    fn get_stat_vblank_int_flag(&self) -> bool {
+        ((self.get_memory(STAT_ADDR, SOURCE) >> 4) & 1) == 1
     }
-    fn get_stat_hblank_int_flag(&self) -> u8 {
-        (self.get_memory(STAT_ADDR, SOURCE) >> 3) & 1
+    fn get_stat_hblank_int_flag(&self) -> bool {
+        ((self.get_memory(STAT_ADDR, SOURCE) >> 3) & 1) == 1
     }
     pub fn get_mode(&self) -> u8 {
         self.get_memory(STAT_ADDR, SOURCE) & 0b11
     }
     fn set_mode(&mut self, mode: u8) {
-        self.write_memory(
-            STAT_ADDR,
-            self.get_memory(STAT_ADDR, SOURCE) & 0b1111100,
-            SOURCE,
-        );
-        self.write_memory(STAT_ADDR, self.get_memory(STAT_ADDR, SOURCE) | mode, SOURCE);
+        if mode == 1 && !self.mem_unit.in_boot_rom {
+            let _q = 0;
+        }
+        let write_val = (self.get_memory(STAT_ADDR, SOURCE) & 0b1111100) | mode;
+        self.write_memory(STAT_ADDR, write_val, SOURCE);
         self.mem_unit.ppu_mode = mode;
+        match mode {
+            0 => {
+                self.ppu.mode_0_line = true;
+                self.ppu.mode_1_line = false;
+                self.ppu.mode_2_line = false;
+            }
+            1 => {
+                self.ppu.mode_0_line = false;
+                self.ppu.mode_1_line = true;
+                self.ppu.mode_2_line = false;
+            }
+            2 => {
+                self.ppu.mode_0_line = false;
+                self.ppu.mode_1_line = false;
+                self.ppu.mode_2_line = true;
+            }
+            3 => {
+                self.ppu.mode_0_line = false;
+                self.ppu.mode_1_line = false;
+                self.ppu.mode_2_line = false;
+            }
+            _ => panic!("bad mode!"),
+        }
     }
     fn set_stat_interrupt(&mut self) {
         self.write_memory(
@@ -161,8 +217,9 @@ impl GameBoyEmulator {
     pub fn ppu_advance(&mut self) {
         if self.get_ppu_enable() == 0 {
             self.set_mode(0);
-            self.write_memory(LY_ADDR, 0, SOURCE);
+            self.update_ly(0);
             self.ppu.cycle_count = 0;
+            self.ppu.starting = true;
             return;
         }
         let mode = self.get_mode();
@@ -173,15 +230,12 @@ impl GameBoyEmulator {
             0x3 => self.drawing_tiles(),
             _ => {}
         }
+        self.update_stat_line();
     }
 
     fn oam_search(&mut self) {
         if self.ppu.starting {
             self.set_mode(2);
-            self.mem_unit.ppu_mode = 2;
-            if self.get_stat_oam_int_flag() == 1 {
-                self.set_stat_interrupt()
-            }
             self.ppu.possible_sprites = Vec::new();
             self.ppu.sprite_num = 0;
             self.ppu.current_sprite_search = 0;
@@ -474,18 +528,6 @@ impl GameBoyEmulator {
 
     fn hblank(&mut self) {
         if self.ppu.starting {
-            self.write_memory(LY_ADDR, self.get_memory(LY_ADDR, SOURCE) + 1, SOURCE);
-            if self.get_memory(LYC_ADDR, SOURCE) == self.get_memory(LY_ADDR, SOURCE) {
-                self.set_stat_lyc_lc_flag();
-                if self.get_stat_lyc_lc_int_flag() == 1 {
-                    self.set_stat_interrupt();
-                }
-            } else {
-                self.reset_stat_lyc_lc_flag()
-            }
-            if self.get_stat_hblank_int_flag() == 1 {
-                self.set_stat_interrupt();
-            }
             if self.ppu.window_row_activated {
                 self.ppu.current_window_row += 1;
             }
@@ -494,13 +536,11 @@ impl GameBoyEmulator {
         } else {
             self.ppu.cycle_count += ADVANCE_CYCLES;
             if self.ppu.cycle_count == HBLANK_DOTS {
+                let ly = self.get_memory(LY_ADDR, SOURCE) + 1;
+                self.update_ly(ly);
                 self.ppu.cycle_count = 0;
                 self.ppu.starting = true;
-                let new_mode = if self.get_memory(LY_ADDR, SOURCE) == 144 {
-                    1
-                } else {
-                    2
-                };
+                let new_mode = if ly == 144 { 1 } else { 2 };
                 self.set_mode(new_mode);
             }
         }
@@ -508,12 +548,9 @@ impl GameBoyEmulator {
 
     fn vblank(&mut self) {
         if self.ppu.starting {
+            self.set_vblank_interrupt();
             self.ppu.frame_num += 1;
             self.ppu.starting = false;
-            self.set_vblank_interrupt();
-            if self.get_stat_vblank_int_flag() == 1 {
-                self.set_stat_interrupt();
-            }
             self.pixels.render().unwrap();
             self.ppu.current_window_row = 0;
             self.ppu.frame_index = 0;
@@ -521,17 +558,9 @@ impl GameBoyEmulator {
         self.ppu.cycle_count += ADVANCE_CYCLES;
         if self.ppu.cycle_count == ROW_DOTS {
             self.ppu.cycle_count = 0;
-            self.write_memory(LY_ADDR, self.get_memory(LY_ADDR, SOURCE) + 1, SOURCE);
-            if self.get_memory(LYC_ADDR, SOURCE) == self.get_memory(LY_ADDR, SOURCE) {
-                self.set_stat_lyc_lc_flag();
-                if self.get_stat_lyc_lc_int_flag() == 1 {
-                    self.set_stat_interrupt();
-                }
-            } else {
-                self.reset_stat_lyc_lc_flag();
-            }
-            if self.get_memory(LY_ADDR, SOURCE) == 154 {
-                self.write_memory(LY_ADDR, 0, SOURCE);
+            let ly = (self.get_memory(LY_ADDR, SOURCE) + 1) % 154;
+            self.update_ly(ly);
+            if ly == 0 {
                 self.ppu.starting = true;
                 self.set_mode(2);
             }
