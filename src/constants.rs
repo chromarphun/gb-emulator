@@ -25,8 +25,15 @@ pub const SAMPLES_PER_SECOND: u32 = 44100;
 pub const CYCLES_PER_SAMPLE: u32 = CYCLES_PER_SECOND / SAMPLES_PER_SECOND;
 
 //Address Constants
-pub const INT_FLAG_ADDR: usize = 0xFF0F;
+
 pub const INT_ENABLE_ADDR: usize = 0xFFFF;
+
+pub const P1_ADDR: usize = 0xFF00;
+pub const DIV_ADDR: usize = 0xFF04;
+pub const TIMA_ADDR: usize = 0xFF05;
+pub const TMA_ADDR: usize = 0xFF06;
+pub const TAC_ADDR: usize = 0xFF07;
+pub const INT_FLAG_ADDR: usize = 0xFF0F;
 pub const NR10_ADDR: usize = 0xFF10;
 pub const NR11_ADDR: usize = 0xFF11;
 pub const NR12_ADDR: usize = 0xFF12;
@@ -48,12 +55,11 @@ pub const NR44_ADDR: usize = 0xFF23;
 pub const NR50_ADDR: usize = 0xFF24;
 pub const NR51_ADDR: usize = 0xFF25;
 pub const NR52_ADDR: usize = 0xFF26;
-pub const P1_ADDR: usize = 0xFF00;
-pub const LY_ADDR: usize = 0xFF44;
 pub const LCDC_ADDR: usize = 0xFF40;
 pub const STAT_ADDR: usize = 0xFF41;
 pub const SCY_ADDR: usize = 0xFF42;
 pub const SCX_ADDR: usize = 0xFF43;
+pub const LY_ADDR: usize = 0xFF44;
 pub const LYC_ADDR: usize = 0xFF45;
 pub const BGP_ADDR: usize = 0xFF47;
 pub const OBP0_ADDR: usize = 0xFF48;
@@ -62,10 +68,7 @@ pub const WY_ADDR: usize = 0xFF4A;
 pub const WX_ADDR: usize = 0xFF4B;
 pub const OAM_START_ADDR: usize = 0xFE00;
 pub const VRAM_START_ADDR: usize = 0x8000;
-pub const DIV_ADDR: usize = 0xFF04;
-pub const TIMA_ADDR: usize = 0xFF05;
-pub const TMA_ADDR: usize = 0xFF06;
-pub const TAC_ADDR: usize = 0xFF07;
+
 pub const CART_TYPE_ADDR: usize = 0x147;
 pub const ROM_BANK_ADDR: usize = 0x148;
 pub const RAM_BANK_ADDR: usize = 0x149;
@@ -114,8 +117,6 @@ pub const MAX_FREQ_VAL: u32 = 2048;
 pub const MAX_8_LENGTH: u16 = 64;
 pub const MAX_16_LENGTH: u16 = 256;
 pub const CYCLE_COUNT_64HZ: u32 = 65536;
-pub const CYCLE_COUNT_128HZ: u32 = 32768;
-pub const CYCLE_COUNT_256HZ: u32 = 16384;
 pub const CYCLE_COUNT_512HZ: u32 = 8192;
 pub const CH1_IND: usize = 0;
 pub const CH2_IND: usize = 1;

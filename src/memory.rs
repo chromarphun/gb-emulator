@@ -186,7 +186,6 @@ impl MemoryUnit {
 impl GameBoyEmulator {
     pub fn get_memory(&self, addr: impl Into<usize>, source: RequestSource) -> u8 {
         let addr = addr.into() as usize;
-
         match addr {
             0x0000..=0x3FFF => match self.mem_unit.cartridge_type {
                 CartType::RomOnly | CartType::Mbc2 | CartType::Mbc3 | CartType::Mbc5 => {
@@ -210,7 +209,7 @@ impl GameBoyEmulator {
                         self.mem_unit.vram_1[addr - 0x8000]
                     }
                 } else {
-                    panic!("breaking on vram reading");
+                    //panic!("breaking on vram reading");
                     //println!("bad vram read!");
                     0xFF
                 }
@@ -356,6 +355,7 @@ impl GameBoyEmulator {
     }
     pub fn write_memory(&mut self, addr: impl Into<usize>, val: u8, source: RequestSource) {
         let addr = addr.into() as usize;
+
         match addr {
             0x0000..=0x1FFF => match self.mem_unit.cartridge_type {
                 CartType::RomOnly => {}
@@ -423,6 +423,9 @@ impl GameBoyEmulator {
                         val as usize & MASKING_BITS[self.mem_unit.rom_bank_bits];
                 }
                 CartType::Mbc5 => {
+                    // if val as usize != self.mem_unit.rom_bank {
+                    //     println!("changing rom bank to {}", val);
+                    // }
                     if addr < 0x3000 {
                         self.mem_unit.rom_bank &= 0x100;
                         self.mem_unit.rom_bank |= val as usize;
@@ -430,6 +433,7 @@ impl GameBoyEmulator {
                         self.mem_unit.rom_bank &= 0x0FF;
                         self.mem_unit.rom_bank |= (val as usize & 1) << 8;
                     }
+                    self.mem_unit.rom_bank %= self.mem_unit.available_rom_banks;
                     // println!(
                     //     "{}",
                     //     format!(
@@ -437,7 +441,6 @@ impl GameBoyEmulator {
                     //         val, addr, self.mem_unit.rom_bank
                     //     )
                     // );
-                    //println!("rom bank is now {}", self.mem_unit.rom_bank);
                 }
                 _ => panic!("Bad cart type."),
             },
@@ -499,7 +502,8 @@ impl GameBoyEmulator {
                         }
                     }
                 }
-                CartType::Mbc3 | CartType::Mbc5 => {
+                CartType::Mbc3 => {}
+                CartType::Mbc5 => {
                     println!("SHOULDN'T BE WRITING HERE?");
                 }
                 _ => panic!("Bad cart type."),
@@ -591,7 +595,6 @@ impl GameBoyEmulator {
                 self.mem_unit.io_registers[addr - 0xFF00] = p1;
             }
             0xFF01 => {
-                println!("{}", format!("out: {:X}", val));
                 self.mem_unit.io_registers[0x01] = val;
             }
             0xFF04 => {
@@ -682,6 +685,8 @@ impl GameBoyEmulator {
             0xFF44 => {
                 if source == RequestSource::PPU {
                     self.mem_unit.io_registers[0x44] = val;
+                } else {
+                    panic!("LY WRITE");
                 }
             }
             0xFF45 => {
@@ -731,6 +736,7 @@ impl GameBoyEmulator {
             0xFF55 => {
                 if self.mem_unit.cgb {
                     if self.mem_unit.hdma_active {
+                        println!("interrupting hdma");
                         if (val >> 7) == 0 {
                             println!("stopping HDMA!");
                             self.mem_unit.hdma_active = false;
@@ -738,9 +744,12 @@ impl GameBoyEmulator {
                         }
                     } else {
                         self.mem_unit.io_registers[0x55] = val;
+                        self.hdma_transfer();
                     }
-                    println!("HDMA TRANSFER");
-                    self.hdma_transfer();
+                    // println!(
+                    //     "HDMA STARTING AT MODE {} and iter {}",
+                    //     self.mem_unit.ppu_mode, self.iteration_count
+                    // );
                 }
             }
             0xFF68 => {
@@ -796,17 +805,20 @@ impl GameBoyEmulator {
         let start_address = reg << 8;
         //println!("{}", format!("DMA TRANSFER from {:X}", start_address));
         match reg >> 4 {
-            // 0x0..=0x3 => {
-            //     let end_address = (start_address + 0xA0) as usize;
-            //     self.mem_unit.oam
-            //         .copy_from_slice(&self.mem_unit.rom[start_address..end_address]);
-            // }
-            // 0x4..=0x7 => {
-            //     let adjusted_start_address = 0x4000 * (self.mem_unit.rom_bank - 1) + reg;
-            //     let adjusted_end_address = adjusted_start_address + 0xA0;
-            //     self.mem_unit.oam
-            //         .copy_from_slice(&self.mem_unit.rom[adjusted_start_address..adjusted_end_address]);
-            // }
+            0x0..=0x3 => {
+                let end_address = (start_address + 0xA0) as usize;
+                self.mem_unit
+                    .oam
+                    .copy_from_slice(&self.mem_unit.rom[start_address..end_address]);
+            }
+            0x4..=0x7 => {
+                let adjusted_start_address =
+                    start_address - 0x4000 + 0x4000 * self.mem_unit.rom_bank;
+                let adjusted_end_address = adjusted_start_address + 0xA0;
+                self.mem_unit.oam.copy_from_slice(
+                    &self.mem_unit.rom[adjusted_start_address..adjusted_end_address],
+                );
+            }
             0x8..=0x9 => {
                 let adjusted_start_address = start_address - 0x8000;
                 let adjusted_end_address = adjusted_start_address + 0xA0;
@@ -822,7 +834,7 @@ impl GameBoyEmulator {
             }
             0xA..=0xB => {
                 let adjusted_start_address =
-                    8192 * (self.mem_unit.ram_bank) + start_address - 0xA000;
+                    start_address - 0xA000 + 0x2000 * (self.mem_unit.ram_bank);
                 let adjusted_end_address = adjusted_start_address + 0xA0;
                 self.mem_unit.oam.copy_from_slice(
                     &self.mem_unit.external_ram[adjusted_start_address..adjusted_end_address],
@@ -937,9 +949,13 @@ impl GameBoyEmulator {
         self.write_memory(HDMA3_ADDR, dest_high, SOURCE);
         self.write_memory(HDMA4_ADDR, dest_low, SOURCE);
         self.mem_unit.hdma_blocks -= 1;
+        self.mem_unit.io_registers[0x55] = self.mem_unit.hdma_blocks;
+        self.cpu.waiting = true;
+        self.cpu.cycle_goal += if self.double_speed { 64 } else { 32 };
         if self.mem_unit.hdma_blocks == 0 {
             self.mem_unit.hdma_active = false;
             self.mem_unit.io_registers[0x55] = 0xFF;
+            //println!("HDMA FINISHED");
         }
     }
     pub fn dma_tick(&mut self) {
@@ -1014,7 +1030,7 @@ impl GameBoyEmulator {
         self.mem_unit.io_registers[BGP_ADDR - 0xFF00] = 0xFC;
         self.mem_unit.io_registers[WY_ADDR - 0xFF00] = 0x00;
         self.mem_unit.io_registers[WX_ADDR - 0xFF00] = 0x00;
-        self.mem_unit.io_registers[KEY1_ADDR - 0xFF00] = 0xFF;
+        self.mem_unit.io_registers[KEY1_ADDR - 0xFF00] = 0;
         self.mem_unit.io_registers[HDMA1_ADDR - 0xFF00] = 0xFF;
         self.mem_unit.io_registers[HDMA2_ADDR - 0xFF00] = 0xFF;
         self.mem_unit.io_registers[HDMA3_ADDR - 0xFF00] = 0xFF;

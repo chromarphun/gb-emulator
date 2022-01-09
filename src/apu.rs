@@ -99,9 +99,14 @@ impl AudioCallback for Channel3 {
                 }
                 right = !right;
                 if right {
+                    // self.phase = (self.phase
+                    //     + CYCLES_PER_SAMPLE as f32
+                    //         / ((MAX_FREQ_VAL - self.frequency.load(Ordering::Relaxed)) as f32))
+                    //     % 1.0;
                     self.phase = (self.phase
-                        + CYCLES_PER_SAMPLE as f32
+                        + (2097152.0
                             / ((MAX_FREQ_VAL - self.frequency.load(Ordering::Relaxed)) as f32))
+                            / SAMPLES_PER_SECOND as f32)
                         % 1.0;
                     if self.phase < old_phase {
                         pointer = (pointer + 1) % 32;
@@ -171,7 +176,7 @@ impl AudioCallback for Channel4 {
             }
             right = !right;
             if right {
-                let phase_add = CYCLES_PER_SAMPLE as f32 / frequency as f32;
+                let phase_add = frequency as f32 / SAMPLES_PER_SECOND as f32;
                 self.phase = (self.phase + phase_add) % 1.0;
 
                 if self.phase < old_phase {

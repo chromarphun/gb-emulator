@@ -94,6 +94,14 @@ impl GameBoyEmulator {
             || (self.ppu.mode_1_line && self.get_stat_vblank_int_flag())
             || (self.ppu.mode_0_line && self.get_stat_hblank_int_flag());
         if !old_line && self.ppu.stat_line {
+            // println!(
+            //     "Stat interrupt, LYC: {}, Mode 2:{}, Mode 1: {}, Mode 0: {} (row: {})",
+            //     self.ppu.lyc_lc_line && self.get_stat_lyc_lc_int_flag(),
+            //     self.ppu.mode_2_line && self.get_stat_oam_int_flag(),
+            //     self.ppu.mode_1_line && self.get_stat_vblank_int_flag(),
+            //     self.ppu.mode_0_line && self.get_stat_hblank_int_flag(),
+            //     self.get_memory(LY_ADDR, SOURCE),
+            // );
             self.set_stat_interrupt();
         }
     }
@@ -151,17 +159,12 @@ impl GameBoyEmulator {
     }
     fn get_stat_hblank_int_flag(&self) -> bool {
         ((self.get_memory(STAT_ADDR, SOURCE) >> 3) & 1) == 1
+        //false
     }
     pub fn get_mode(&self) -> u8 {
         self.get_memory(STAT_ADDR, SOURCE) & 0b11
     }
     fn set_mode(&mut self, mode: u8) {
-        if mode == 1 && !self.mem_unit.in_boot_rom {
-            let _q = 0;
-        }
-        let write_val = (self.get_memory(STAT_ADDR, SOURCE) & 0b1111100) | mode;
-        self.write_memory(STAT_ADDR, write_val, SOURCE);
-        self.mem_unit.ppu_mode = mode;
         match mode {
             0 => {
                 self.ppu.mode_0_line = true;
@@ -169,6 +172,7 @@ impl GameBoyEmulator {
                 self.ppu.mode_2_line = false;
             }
             1 => {
+                self.set_vblank_interrupt();
                 self.ppu.mode_0_line = false;
                 self.ppu.mode_1_line = true;
                 self.ppu.mode_2_line = false;
@@ -185,18 +189,21 @@ impl GameBoyEmulator {
             }
             _ => panic!("bad mode!"),
         }
+        let write_val = (self.get_memory(STAT_ADDR, SOURCE) & 0b1111100) | mode;
+        self.write_memory(STAT_ADDR, write_val, SOURCE);
+        self.mem_unit.ppu_mode = mode;
     }
     fn set_stat_interrupt(&mut self) {
         self.write_memory(
             INT_FLAG_ADDR,
-            self.get_memory(INT_FLAG_ADDR, SOURCE) | 0b00010,
+            self.get_memory(INT_FLAG_ADDR, SOURCE) | 0b10,
             SOURCE,
         );
     }
     fn set_stat_lyc_lc_flag(&mut self) {
         self.write_memory(
             STAT_ADDR,
-            self.get_memory(STAT_ADDR, SOURCE) | 0b0000100,
+            self.get_memory(STAT_ADDR, SOURCE) | 0b100,
             SOURCE,
         );
     }
@@ -220,22 +227,22 @@ impl GameBoyEmulator {
             self.update_ly(0);
             self.ppu.cycle_count = 0;
             self.ppu.starting = true;
-            return;
-        }
-        let mode = self.get_mode();
-        match mode {
-            0x0 => self.hblank(),
-            0x1 => self.vblank(),
-            0x2 => self.oam_search(),
-            0x3 => self.drawing_tiles(),
-            _ => {}
+        } else {
+            let mode = self.get_mode();
+            match mode {
+                0x0 => self.hblank(),
+                0x1 => self.vblank(),
+                0x2 => self.oam_search(),
+                0x3 => self.drawing_tiles(),
+                _ => {}
+            }
         }
         self.update_stat_line();
     }
 
     fn oam_search(&mut self) {
         if self.ppu.starting {
-            self.set_mode(2);
+            //self.set_mode(2);
             self.ppu.possible_sprites = Vec::new();
             self.ppu.sprite_num = 0;
             self.ppu.current_sprite_search = 0;
@@ -351,7 +358,6 @@ impl GameBoyEmulator {
             let tile_map_index = tilemap_row_start_index
                 + (tiles_within_row_start + self.ppu.tile_num as usize) % 32;
             let tile_map_addr = tilemap_start_addr + tile_map_index;
-
             let (bg_priority, vertical_flip, horizontal_flip, bank_number, palette) = if self.cgb {
                 let bg_attribute_data = self.access_vram(tile_map_addr, 1);
                 (
@@ -548,7 +554,6 @@ impl GameBoyEmulator {
 
     fn vblank(&mut self) {
         if self.ppu.starting {
-            self.set_vblank_interrupt();
             self.ppu.frame_num += 1;
             self.ppu.starting = false;
             self.pixels.render().unwrap();

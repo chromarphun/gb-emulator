@@ -31,7 +31,7 @@ impl GameBoyEmulator {
         let state = self.epu.event_pump.keyboard_state();
         let mut save = false;
         let mut open = false;
-        self.cpu.printing = false;
+        self.cpu.debug_action = false;
         for code in state.pressed_scancodes() {
             match code {
                 Scancode::Z => self.epu.new_action_presses &= 0b1110,
@@ -44,7 +44,7 @@ impl GameBoyEmulator {
                 Scancode::Down => self.epu.new_directional_presses &= 0b0111,
                 Scancode::Num1 => save = true,
                 Scancode::Num2 => open = true,
-                Scancode::Q => self.cpu.printing = true,
+                Scancode::Q => self.cpu.debug_action = true,
                 _ => {}
             }
         }
