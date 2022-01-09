@@ -2,8 +2,6 @@ use crate::constants::*;
 use crate::emulator::GameBoyEmulator;
 use crate::emulator::RequestSource;
 use serde::{Deserialize, Serialize};
-use std::fs::File;
-use std::io::prelude::*;
 
 const SOURCE: RequestSource = RequestSource::CPU;
 
@@ -366,6 +364,7 @@ impl CentralProcessingUnit {
             command: 0,
         }
     }
+
     fn cgb_initialize_after_boot(&mut self) {
         self.regs[REG_A] = 0x11;
         self.z_flag = 1;
@@ -423,6 +422,13 @@ impl CentralProcessingUnit {
 }
 
 impl GameBoyEmulator {
+    pub fn initialize_after_boot(&mut self) {
+        if self.cgb {
+            self.cpu.cgb_initialize_after_boot();
+        } else {
+            self.cpu.dmg_initialize_after_boot();
+        }
+    }
     pub fn cpu_advance(&mut self) {
         if self.cpu.waiting {
             self.cpu.cycle_count += ADVANCE_CYCLES;
@@ -431,14 +437,6 @@ impl GameBoyEmulator {
                 self.cpu.cycle_count = 0;
             }
         } else {
-            if self.mem_unit.cpu_initialize {
-                self.mem_unit.cpu_initialize = false;
-                if self.cgb {
-                    self.cpu.cgb_initialize_after_boot();
-                } else {
-                    self.cpu.dmg_initialize_after_boot();
-                }
-            }
             if self.cpu.change_ime_true {
                 self.cpu.change_ime_true = false;
                 self.cpu.ime = true;
@@ -476,48 +474,6 @@ impl GameBoyEmulator {
                 self.cpu.cycle_goal = INTERRUPT_DOTS;
             } else {
                 self.cpu.command = self.get_memory(self.cpu.pc, SOURCE) as usize;
-                // if self.cpu.printing {
-                //     let next = self.get_memory(self.cpu.pc + 1, SOURCE);
-                //     println!(
-                //         "{}",
-                //         format!(
-                //             "pc: {:X}, command: {:X}, next: {:X}, sp: {:X}",
-                //             self.cpu.pc, command, next, self.cpu.sp
-                //         ),
-                //     );
-                // }
-                // if self.cpu.debug_action || !self.mem_unit.in_boot_rom {
-                //     let next1 = self.get_memory(self.cpu.pc + 1, SOURCE);
-                //     let next2 = self.get_memory(self.cpu.pc + 2, SOURCE);
-
-                //     let stack1 = self.get_memory(self.cpu.sp, SOURCE);
-                //     let stack2 = self.get_memory(self.cpu.sp + 1, SOURCE);
-                //     self.log
-                //             .write(
-                //                 format!(
-                //                     "pc: {:04X} | command: {:<20} | regs: {:02X?} | next: {:02X} {:02X} | \
-                //                     sp: {:04X} | stack: {:02X} {:02X} | rom bank: {:03} | sram bank: {:03} | wram bank: {:03} | iter: {:010} | ime {}\n",
-                //                     self.cpu.pc,
-                //                     FUNCTION_NAMES[self.cpu.command ],
-                //                     self.cpu.regs,
-                //                     next1,
-                //                     next2,
-                //                     self.cpu.sp,
-                //                     stack1,
-                //                     stack2,
-                //                     self.mem_unit.rom_bank,
-                //                     self.mem_unit.ram_bank,
-                //                     self.mem_unit.wram_bank,
-                //                     self.iteration_count,
-                //                     self.cpu.ime,
-
-                //                 )
-                //                 .as_bytes(),
-                //             )
-                //             .expect("WRITE FAILURE");
-                // }
-
-                self.cpu.old_pc = self.cpu.pc;
 
                 let repeat_operation = if self.cpu.repeat {
                     self.cpu.repeat = false;
@@ -572,7 +528,6 @@ impl GameBoyEmulator {
         let prepare = (key1 & 1) == 1;
         if prepare && self.cgb {
             self.double_speed = !self.double_speed;
-            println!("switching to double_speed {}", self.double_speed);
             self.cpu.cycle_modification = 8200;
             let speed_bit = if self.double_speed { 1 } else { 0 };
             self.write_memory(KEY1_ADDR, speed_bit << 7, RequestSource::SPEC);

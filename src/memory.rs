@@ -1,7 +1,5 @@
 use crate::emulator::GameBoyEmulator;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::convert::TryInto;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
@@ -59,25 +57,25 @@ struct SaveGame {
     ram_enable: bool,
     hold_mem: Vec<u8>,
     pub in_boot_rom: bool,
-    dma_cycles: u16,
+    dma_cycles: u32,
     cpu: CentralProcessingUnit,
     ppu: PictureProcessingUnit,
     timer: Timer,
 }
 
 pub struct MemoryUnit {
-    pub rom: Vec<u8>,
+    rom: Vec<u8>,
     vram_0: Vec<u8>,
     vram_1: Vec<u8>,
     external_ram: Vec<u8>,
     internal_ram: Vec<u8>,
     oam: Vec<u8>,
-    pub io_registers: Vec<u8>,
+    io_registers: Vec<u8>,
     high_ram: Vec<u8>,
     pub interrupt_enable: u8,
     memory_mode: u8,
-    pub rom_bank: usize,
-    pub ram_bank: usize,
+    rom_bank: usize,
+    ram_bank: usize,
     mbc1_0_bank: usize,
     mbc1_5_bit_reg: usize,
     mbc1_2_bit_reg: usize,
@@ -87,17 +85,17 @@ pub struct MemoryUnit {
     available_rom_banks: usize,
     available_ram_banks: u8,
     hold_mem: Vec<u8>,
-    pub in_boot_rom: bool,
+    in_boot_rom: bool,
     pub directional_presses: u8,
     pub action_presses: u8,
-    dma_cycles: u16,
+    dma_cycles: u32,
     pub ppu_mode: u8,
     bg_color_ram: [u8; 64],
     obj_color_ram: [u8; 64],
     bg_color_inc: bool,
     obj_color_inc: bool,
     vram_bank: u8,
-    pub wram_bank: usize,
+    wram_bank: usize,
     cgb: bool,
     hdma_primed: bool,
     hdma_blocks: u8,
@@ -105,65 +103,41 @@ pub struct MemoryUnit {
     hdma_current_dest_addr: usize,
     hdma_current_source_addr: usize,
     valid_io: [bool; 0x80],
-    pub cpu_initialize: bool,
-    debug_var: HashSet<usize>,
 }
 
 impl MemoryUnit {
     pub fn new() -> MemoryUnit {
-        let rom = Vec::new();
-        let vram_0 = vec![0; VRAM_SIZE];
-        let vram_1 = vec![0; VRAM_SIZE];
-        let external_ram = Vec::new();
-        let internal_ram = vec![0; IRAM_SIZE];
-        let oam = vec![0; OAM_SIZE];
-        let io_registers = vec![0; IO_SIZE];
-        let memory_mode = 0;
-        let rom_bank = 1;
-        let ram_bank = 0;
-        let rom_bank_bits = 0;
-        let ram_enable = false;
-        let cartridge_type = CartType::Uninitialized;
-        let available_rom_banks = 0;
-        let available_ram_banks = 0;
-        let hold_mem = vec![0; 2048];
-        let interrupt_enable = 0;
-        let high_ram = vec![0; HRAM_SIZE];
-        let in_boot_rom = true;
-        let directional_presses = 0xF;
-        let action_presses = 0xF;
-        let dma_cycles = 0;
         let mut valid_io = [true; 0x80];
         for ind in NON_BLOCK_INVALID_IO.iter() {
             valid_io[*ind] = false;
         }
         valid_io[0x4C..0x80].copy_from_slice(&[false; (0x80 - 0x4C)]);
         MemoryUnit {
-            rom,
-            vram_0,
-            vram_1,
-            external_ram,
-            internal_ram,
-            oam,
-            io_registers,
-            interrupt_enable,
-            high_ram,
-            memory_mode,
-            rom_bank,
-            ram_bank,
+            rom: Vec::new(),
+            vram_0: vec![0; VRAM_SIZE],
+            vram_1: vec![0; VRAM_SIZE],
+            external_ram: Vec::new(),
+            internal_ram: vec![0; IRAM_SIZE],
+            oam: vec![0; OAM_SIZE],
+            io_registers: vec![0; IO_SIZE],
+            interrupt_enable: 0,
+            high_ram: vec![0; HRAM_SIZE],
+            memory_mode: 0,
+            rom_bank: 1,
+            ram_bank: 0,
             mbc1_0_bank: 0,
             mbc1_5_bit_reg: 0,
             mbc1_2_bit_reg: 0,
-            rom_bank_bits,
-            ram_enable,
-            cartridge_type,
-            available_rom_banks,
-            available_ram_banks,
-            hold_mem,
-            in_boot_rom,
-            directional_presses,
-            action_presses,
-            dma_cycles,
+            rom_bank_bits: 0,
+            ram_enable: false,
+            cartridge_type: CartType::Uninitialized,
+            available_rom_banks: 0,
+            available_ram_banks: 0,
+            hold_mem: vec![0; 2048],
+            in_boot_rom: true,
+            directional_presses: 0xF,
+            action_presses: 0xF,
+            dma_cycles: 0,
             ppu_mode: 0,
             bg_color_ram: [0; 64],
             obj_color_ram: [0; 64],
@@ -178,8 +152,6 @@ impl MemoryUnit {
             hdma_current_dest_addr: 0,
             hdma_current_source_addr: 0,
             valid_io,
-            cpu_initialize: false,
-            debug_var: HashSet::new(),
         }
     }
 }
@@ -191,26 +163,26 @@ impl GameBoyEmulator {
                 CartType::RomOnly | CartType::Mbc2 | CartType::Mbc3 | CartType::Mbc5 => {
                     self.mem_unit.rom[addr]
                 }
-                CartType::Mbc1 => self.mem_unit.rom[self.mem_unit.mbc1_0_bank * 0x4000 + addr],
+                CartType::Mbc1 => {
+                    self.mem_unit.rom[self.mem_unit.mbc1_0_bank * ROM_BANK_SIZE + addr]
+                }
                 _ => panic!("Bad cart type."),
             },
             0x4000..=0x7FFF => match self.mem_unit.cartridge_type {
                 CartType::RomOnly => self.mem_unit.rom[addr],
                 CartType::Mbc1 | CartType::Mbc2 | CartType::Mbc3 | CartType::Mbc5 => {
-                    self.mem_unit.rom[addr + 0x4000 * self.mem_unit.rom_bank - 0x4000]
+                    self.mem_unit.rom[addr + ROM_BANK_SIZE * self.mem_unit.rom_bank - ROM_BANK_SIZE]
                 }
                 _ => panic!("Bad cart type."),
             },
             0x8000..=0x9FFF => {
-                if self.mem_unit.ppu_mode != 3 || source == RequestSource::PPU {
+                if self.mem_unit.ppu_mode != DRAWING_MODE || source == RequestSource::PPU {
                     if self.mem_unit.vram_bank == 0 {
-                        self.mem_unit.vram_0[addr - 0x8000]
+                        self.mem_unit.vram_0[addr - VRAM_START_ADDR]
                     } else {
-                        self.mem_unit.vram_1[addr - 0x8000]
+                        self.mem_unit.vram_1[addr - VRAM_START_ADDR]
                     }
                 } else {
-                    //panic!("breaking on vram reading");
-                    //println!("bad vram read!");
                     0xFF
                 }
             }
@@ -223,134 +195,140 @@ impl GameBoyEmulator {
                     {
                         0xFF
                     } else {
-                        self.mem_unit.external_ram[addr - 0xA000 + 0x2000 * self.mem_unit.ram_bank]
+                        self.mem_unit.external_ram
+                            [addr - ERAM_START_ADDR + ERAM_BANK_SIZE * self.mem_unit.ram_bank]
                     }
                 }
                 CartType::Mbc2 => {
                     if !self.mem_unit.ram_enable {
                         0xFF
                     } else {
-                        self.mem_unit.external_ram[(addr - 0xA000) % 0x200] & 0xF
+                        self.mem_unit.external_ram[(addr - ERAM_START_ADDR) % 0x200] & 0xF
                     }
                 }
                 CartType::Mbc5 => {
                     if !self.mem_unit.ram_enable {
                         0xFF
                     } else {
-                        self.mem_unit.external_ram[addr - 0xA000 + 0x2000 * self.mem_unit.ram_bank]
+                        self.mem_unit.external_ram
+                            [addr - ERAM_START_ADDR + ERAM_BANK_SIZE * self.mem_unit.ram_bank]
                     }
                 }
                 _ => panic!("Bad cart type."),
             },
-            0xC000..=0xCFFF => self.mem_unit.internal_ram[addr - 0xC000],
+            0xC000..=0xCFFF => self.mem_unit.internal_ram[addr - WRAM_START_ADDR],
             0xD000..=0xDFFF => {
-                self.mem_unit.internal_ram[addr - 0xD000 + 0x1000 * self.mem_unit.wram_bank]
+                self.mem_unit.internal_ram[addr - WRAM_START_ADDR - WRAM_BANK_SIZE
+                    + WRAM_BANK_SIZE * self.mem_unit.wram_bank]
             }
             0xE000..=0xFDFF => self.mem_unit.internal_ram[addr - 0xE000],
             0xFE00..=0xFE9F => {
                 if source == RequestSource::MAU
                     || source == RequestSource::PPU
-                    || self.mem_unit.ppu_mode == 0
-                    || self.mem_unit.ppu_mode == 1
+                    || self.mem_unit.ppu_mode == HBLANK_MODE
+                    || self.mem_unit.ppu_mode == VBLANK_MODE
                 {
-                    self.mem_unit.oam[addr - 0xFE00]
+                    self.mem_unit.oam[addr - OAM_START_ADDR]
                 } else {
                     0xFF
                 }
             }
-            0xFF69 => self.mem_unit.bg_color_ram[self.mem_unit.io_registers[0x69] as usize],
-            0xFF6B => self.mem_unit.obj_color_ram[self.mem_unit.io_registers[0x6B] as usize],
-            0xFF10 => {
+
+            NR10_ADDR => {
                 if source == RequestSource::CPU {
-                    self.mem_unit.io_registers[0x10] | 0x80
+                    self.mem_unit.io_registers[NR10_ADDR - IO_START_ADDR] | 0x80
                 } else {
-                    self.mem_unit.io_registers[0x10]
+                    self.mem_unit.io_registers[NR10_ADDR - IO_START_ADDR]
                 }
             }
-            0xFF11 => {
+            NR11_ADDR => {
                 if source == RequestSource::CPU {
-                    self.mem_unit.io_registers[0x11] | 0x3F
+                    self.mem_unit.io_registers[NR11_ADDR - IO_START_ADDR] | 0x3F
                 } else {
-                    self.mem_unit.io_registers[0x11]
+                    self.mem_unit.io_registers[NR11_ADDR - IO_START_ADDR]
                 }
             }
-            0xFF14 => {
+            NR14_ADDR => {
                 if source == RequestSource::CPU {
-                    self.mem_unit.io_registers[0x14] | 0xBF
+                    self.mem_unit.io_registers[NR14_ADDR - IO_START_ADDR] | 0xBF
                 } else {
-                    self.mem_unit.io_registers[0x14]
+                    self.mem_unit.io_registers[NR14_ADDR - IO_START_ADDR]
                 }
             }
-            0xFF16 => {
+            NR21_ADDR => {
                 if source == RequestSource::CPU {
-                    self.mem_unit.io_registers[0x16] | 0x3F
+                    self.mem_unit.io_registers[NR21_ADDR - IO_START_ADDR] | 0x3F
                 } else {
-                    self.mem_unit.io_registers[0x16]
+                    self.mem_unit.io_registers[NR21_ADDR - IO_START_ADDR]
                 }
             }
-            0xFF19 => {
+            NR24_ADDR => {
                 if source == RequestSource::CPU {
-                    self.mem_unit.io_registers[0x19] | 0xBF
+                    self.mem_unit.io_registers[NR24_ADDR - IO_START_ADDR] | 0xBF
                 } else {
-                    self.mem_unit.io_registers[0x19]
+                    self.mem_unit.io_registers[NR24_ADDR - IO_START_ADDR]
                 }
             }
-            0xFF1A => {
+            NR30_ADDR => {
                 if source == RequestSource::CPU {
-                    self.mem_unit.io_registers[0x1A] | 0x7F
+                    self.mem_unit.io_registers[NR30_ADDR - IO_START_ADDR] | 0x7F
                 } else {
-                    self.mem_unit.io_registers[0x1A]
+                    self.mem_unit.io_registers[NR30_ADDR - IO_START_ADDR]
                 }
             }
-            0xFF1C => {
+            NR32_ADDR => {
                 if source == RequestSource::CPU {
-                    self.mem_unit.io_registers[0x1C] | 0x9F
+                    self.mem_unit.io_registers[NR32_ADDR - IO_START_ADDR] | 0x9F
                 } else {
-                    self.mem_unit.io_registers[0x1C]
+                    self.mem_unit.io_registers[NR32_ADDR - IO_START_ADDR]
                 }
             }
-            0xFF1E => {
+            NR34_ADDR => {
                 if source == RequestSource::CPU {
-                    self.mem_unit.io_registers[0x1E] | 0xBF
+                    self.mem_unit.io_registers[NR34_ADDR - IO_START_ADDR] | 0xBF
                 } else {
-                    self.mem_unit.io_registers[0x1E]
+                    self.mem_unit.io_registers[NR34_ADDR - IO_START_ADDR]
                 }
             }
-            0xFF23 => {
+            NR44_ADDR => {
                 if source == RequestSource::CPU {
-                    self.mem_unit.io_registers[0x23] | 0xBF
+                    self.mem_unit.io_registers[NR44_ADDR - IO_START_ADDR] | 0xBF
                 } else {
-                    self.mem_unit.io_registers[0x23]
+                    self.mem_unit.io_registers[NR44_ADDR - IO_START_ADDR]
                 }
             }
-            0xFF26 => {
+            NR52_ADDR => {
                 if source == RequestSource::CPU {
-                    self.mem_unit.io_registers[0x26] | 0x70
+                    self.mem_unit.io_registers[NR52_ADDR - IO_START_ADDR] | 0x70
                 } else {
-                    self.mem_unit.io_registers[0x26]
+                    self.mem_unit.io_registers[NR52_ADDR - IO_START_ADDR]
                 }
             }
             0xFF30..=0xFF3F => {
                 if source == RequestSource::CPU {
                     self.wave_ram_read(addr)
                 } else {
-                    self.mem_unit.io_registers[addr - 0xFF00]
+                    self.mem_unit.io_registers[addr - IO_START_ADDR]
                 }
             }
+            BCPS_ADDR => {
+                self.mem_unit.bg_color_ram
+                    [self.mem_unit.io_registers[BCPS_ADDR - IO_START_ADDR] as usize]
+            }
+            BCPD_ADDR => {
+                self.mem_unit.obj_color_ram
+                    [self.mem_unit.io_registers[BCPD_ADDR - IO_START_ADDR] as usize]
+            }
             0xFF00..=0xFF7F => {
-                if self.mem_unit.valid_io[addr - 0xFF00] || source != RequestSource::CPU {
-                    self.mem_unit.io_registers[addr - 0xFF00]
+                if self.mem_unit.valid_io[addr - IO_START_ADDR] || source != RequestSource::CPU {
+                    self.mem_unit.io_registers[addr - IO_START_ADDR]
                 } else {
-                    println!("{}", format!("hitting invalid IO at {:X}", addr));
                     0xFF
                 }
             }
-            0xFF80..=0xFFFE => self.mem_unit.high_ram[addr - 0xFF80],
-            0xFFFF => self.mem_unit.interrupt_enable,
-            _ => {
-                println!("bad general read!");
-                0xFF
-            }
+            0xFF80..=0xFFFE => self.mem_unit.high_ram[addr - HRAM_START_ADDR],
+            INT_ENABLE_ADDR => self.mem_unit.interrupt_enable,
+            _ => 0xFF,
         }
     }
     pub fn write_memory(&mut self, addr: impl Into<usize>, val: u8, source: RequestSource) {
@@ -384,7 +362,6 @@ impl GameBoyEmulator {
             0x2000..=0x3FFF => match self.mem_unit.cartridge_type {
                 CartType::RomOnly => {}
                 CartType::Mbc1 => {
-                    //if val & MASKING_BITS[self.mem_unit.rom_bank_bits] as u8 == 0 {
                     if val & 0x1F == 0 {
                         self.mem_unit.mbc1_5_bit_reg =
                             (val as usize & MASKING_BITS[self.mem_unit.rom_bank_bits]) + 1
@@ -397,10 +374,6 @@ impl GameBoyEmulator {
                     } else {
                         self.mem_unit.mbc1_5_bit_reg
                     };
-                    println!(
-                        "rom bank now {} at iter {}",
-                        self.mem_unit.rom_bank, self.iteration_count
-                    );
                 }
                 CartType::Mbc2 => {
                     let bit_8_reset = ((addr >> 8) & 1) == 0;
@@ -418,14 +391,10 @@ impl GameBoyEmulator {
                     }
                 }
                 CartType::Mbc3 => {
-                    //println!("changing rom bank to {}", val);
                     self.mem_unit.rom_bank =
                         val as usize & MASKING_BITS[self.mem_unit.rom_bank_bits];
                 }
                 CartType::Mbc5 => {
-                    // if val as usize != self.mem_unit.rom_bank {
-                    //     println!("changing rom bank to {}", val);
-                    // }
                     if addr < 0x3000 {
                         self.mem_unit.rom_bank &= 0x100;
                         self.mem_unit.rom_bank |= val as usize;
@@ -434,13 +403,6 @@ impl GameBoyEmulator {
                         self.mem_unit.rom_bank |= (val as usize & 1) << 8;
                     }
                     self.mem_unit.rom_bank %= self.mem_unit.available_rom_banks;
-                    // println!(
-                    //     "{}",
-                    //     format!(
-                    //         "setting to rom bank with val {:#04X} using addr {:#06X}, making it rom_bank {:#04X}",
-                    //         val, addr, self.mem_unit.rom_bank
-                    //     )
-                    // );
                 }
                 _ => panic!("Bad cart type."),
             },
@@ -458,10 +420,6 @@ impl GameBoyEmulator {
                             self.mem_unit.mbc1_0_bank = self.mem_unit.mbc1_2_bit_reg << 5;
                         }
                     }
-                    // println!(
-                    //     "rom bank now {} at iter {}",
-                    //     self.mem_unit.rom_bank, self.iteration_count
-                    // );
                 }
                 CartType::Mbc3 => {
                     if val < 0x4 {
@@ -503,69 +461,56 @@ impl GameBoyEmulator {
                     }
                 }
                 CartType::Mbc3 => {}
-                CartType::Mbc5 => {
-                    println!("SHOULDN'T BE WRITING HERE?");
-                }
+                CartType::Mbc5 => {}
                 _ => panic!("Bad cart type."),
             },
             0x8000..=0x9FFF => {
-                if self.mem_unit.ppu_mode != 3 || source == RequestSource::PPU {
+                if self.mem_unit.ppu_mode != DRAWING_MODE || source == RequestSource::PPU {
                     if self.mem_unit.vram_bank == 0 {
-                        self.mem_unit.vram_0[addr - 0x8000] = val;
+                        self.mem_unit.vram_0[addr - VRAM_START_ADDR] = val;
                     } else {
-                        self.mem_unit.vram_1[addr - 0x8000] = val;
+                        self.mem_unit.vram_1[addr - VRAM_START_ADDR] = val;
                     }
-                } else {
-                    // println!(
-                    //     "{}",
-                    //     format!("bad vram write at {:X} from {:?}", addr, source)
-                    // );
-                    // self.log
-                    //     .write(format!("bad vram write at {:X} from {:?}", addr, source).as_bytes())
-                    //     .expect("WRITE FAILURE");
-                    //panic!("panicking at vram write!!!");
                 }
             }
-            0xA000..=0xBFFF => match self.mem_unit.cartridge_type {
-                CartType::RomOnly => {}
-                CartType::Mbc1 | CartType::Mbc3 => {
-                    if !(self.mem_unit.available_ram_banks == 0
-                        || !self.mem_unit.ram_enable
-                        || self.mem_unit.memory_mode == 1)
-                    {
-                        self.mem_unit.external_ram
-                            [addr - 0xA000 + 0x2000 * self.mem_unit.ram_bank] = val;
+            0xA000..=0xBFFF => {
+                match self.mem_unit.cartridge_type {
+                    CartType::RomOnly => {}
+                    CartType::Mbc1 | CartType::Mbc3 => {
+                        if !(self.mem_unit.available_ram_banks == 0
+                            || !self.mem_unit.ram_enable
+                            || self.mem_unit.memory_mode == 1)
+                        {
+                            self.mem_unit.external_ram[addr - ERAM_START_ADDR
+                                + ERAM_BANK_SIZE * self.mem_unit.ram_bank] = val;
+                        }
                     }
-                }
-                CartType::Mbc2 => {
-                    if self.mem_unit.ram_enable {
-                        self.mem_unit.external_ram[(addr - 0xA000) % 0x200] = val;
+                    CartType::Mbc2 => {
+                        if self.mem_unit.ram_enable {
+                            self.mem_unit.external_ram[(addr - ERAM_START_ADDR) % 0x200] = val;
+                        }
                     }
-                }
-                CartType::Mbc5 => {
-                    if self.mem_unit.ram_enable {
-                        self.mem_unit.external_ram
-                            [addr - 0xA000 + 0x2000 * self.mem_unit.ram_bank] = val;
+                    CartType::Mbc5 => {
+                        if self.mem_unit.ram_enable {
+                            self.mem_unit.external_ram[addr - ERAM_START_ADDR
+                                + ERAM_BANK_SIZE * self.mem_unit.ram_bank] = val;
+                        }
                     }
+                    _ => panic!("Bad cart type."),
                 }
-                _ => panic!("Bad cart type."),
-            },
-            0xC000..=0xCFFF => self.mem_unit.internal_ram[addr - 0xC000] = val,
+            }
+            0xC000..=0xCFFF => self.mem_unit.internal_ram[addr - WRAM_START_ADDR] = val,
             0xD000..=0xDFFF => {
-                self.mem_unit.internal_ram[addr - 0xD000 + 0x1000 * self.mem_unit.wram_bank] = val;
+                self.mem_unit.internal_ram[addr - WRAM_START_ADDR - WRAM_BANK_SIZE
+                    + WRAM_BANK_SIZE * self.mem_unit.wram_bank] = val;
             }
-            0xE000..=0xFDFF => {
-                println!("writing in weird mirror area");
-                self.mem_unit.internal_ram[addr - 0xE000] = val
-            }
+            0xE000..=0xFDFF => self.mem_unit.internal_ram[addr - 0xE000] = val,
             0xFE00..=0xFE9F => {
                 if source == RequestSource::MAU
-                    || self.mem_unit.ppu_mode == 0
-                    || self.mem_unit.ppu_mode == 1
+                    || self.mem_unit.ppu_mode == HBLANK_MODE
+                    || self.mem_unit.ppu_mode == VBLANK_MODE
                 {
-                    self.mem_unit.oam[addr - 0xFE00] = val
-                } else {
-                    println!("Bad OAM write!");
+                    self.mem_unit.oam[addr - OAM_START_ADDR] = val
                 }
             }
             0xFF00 => {
@@ -592,21 +537,17 @@ impl GameBoyEmulator {
                         SOURCE,
                     );
                 }
-                self.mem_unit.io_registers[addr - 0xFF00] = p1;
+                self.mem_unit.io_registers[addr - IO_START_ADDR] = p1;
             }
-            0xFF01 => {
-                self.mem_unit.io_registers[0x01] = val;
-            }
-            0xFF04 => {
-                self.mem_unit.io_registers[0x04] = 0;
+            DIV_ADDR => {
+                self.mem_unit.io_registers[DIV_ADDR - IO_START_ADDR] = 0;
             }
             0xFF10..=0xFF2F => {
-                if addr == 0xFF26 {
+                if addr == NR52_ADDR {
                     if source == RequestSource::CPU {
                         let old_power_val = self.mem_unit.io_registers[0x26] >> 7;
-                        self.mem_unit.io_registers[0x26] &= 0x7F;
+                        self.mem_unit.io_registers[NR52_ADDR - IO_START_ADDR] &= 0x7F;
                         if (val >> 7) == 0 {
-                            println!("apu power down!");
                             for ind in 0x10..0x30_usize {
                                 self.mem_unit.io_registers[ind] = 0;
                             }
@@ -615,11 +556,12 @@ impl GameBoyEmulator {
                         } else if old_power_val == 0 {
                             self.apu_power_up();
                         }
-                        self.mem_unit.io_registers[0x26] |= (val & 0x80) | 0x70;
+                        self.mem_unit.io_registers[NR52_ADDR - IO_START_ADDR] |=
+                            (val & 0x80) | 0x70;
                     } else {
-                        self.mem_unit.io_registers[0x26] = val;
+                        self.mem_unit.io_registers[NR52_ADDR - IO_START_ADDR] = val;
                     }
-                } else if (self.mem_unit.io_registers[0x26] >> 7) == 1 {
+                } else if (self.mem_unit.io_registers[NR52_ADDR - IO_START_ADDR] >> 7) == 1 {
                     if source != RequestSource::APU {
                         match addr {
                             0xFF10 => self.sweep_var_update(val),
@@ -653,148 +595,122 @@ impl GameBoyEmulator {
                         }
                     }
 
-                    self.mem_unit.io_registers[addr - 0xFF00] = val;
+                    self.mem_unit.io_registers[addr - IO_START_ADDR] = val;
                 }
             }
             0xFF30..=0xFF3F => {
                 if source == RequestSource::CPU {
                     self.wave_ram_write(addr, val);
                 } else {
-                    self.mem_unit.io_registers[addr - 0xFF00] = val;
+                    self.mem_unit.io_registers[addr - IO_START_ADDR] = val;
                 }
             }
-            0xFF41 => {
+            STAT_ADDR => {
                 if source == RequestSource::PPU {
-                    self.mem_unit.io_registers[0x41] = val;
+                    self.mem_unit.io_registers[STAT_ADDR - IO_START_ADDR] = val;
                 } else {
-                    // println!(
-                    //     "{}",
-                    //     format!(
-                    //         "changing stat bits {:#010b} at LY {}, LYC {} pc: {:#04X}, iter {}",
-                    //         val,
-                    //         self.mem_unit.io_registers[0x44],
-                    //         self.mem_unit.io_registers[0x45],
-                    //         self.cpu.pc,
-                    //         self.iteration_count
-                    //     )
-                    // );
-                    self.mem_unit.io_registers[0x41] &= 0b0000111;
-                    self.mem_unit.io_registers[0x41] |= val & 0b1111000
+                    self.mem_unit.io_registers[STAT_ADDR - IO_START_ADDR] &= 0b0000111;
+                    self.mem_unit.io_registers[STAT_ADDR - IO_START_ADDR] |= val & 0b1111000
                 }
             }
-            0xFF44 => {
+            LY_ADDR => {
                 if source == RequestSource::PPU {
-                    self.mem_unit.io_registers[0x44] = val;
+                    self.mem_unit.io_registers[LY_ADDR - IO_START_ADDR] = val;
                 } else {
                     panic!("LY WRITE");
                 }
             }
-            0xFF45 => {
-                self.mem_unit.io_registers[0x45] = val;
+            LYC_ADDR => {
+                self.mem_unit.io_registers[LYC_ADDR - IO_START_ADDR] = val;
                 self.check_lyc_flag();
             }
-            0xFF46 => {
-                self.mem_unit.io_registers[addr - 0xFF00] = val;
+            DMA_ADDR => {
+                self.mem_unit.io_registers[addr - IO_START_ADDR] = val;
                 self.dma_transfer(val as usize);
             }
-            0xFF4D => {
+            KEY1_ADDR => {
                 if self.mem_unit.cgb {
                     if source != RequestSource::SPEC {
-                        self.mem_unit.io_registers[0x4D] &= 0xFE;
-                        self.mem_unit.io_registers[0x4D] |= val & 1;
+                        self.mem_unit.io_registers[KEY1_ADDR - IO_START_ADDR] &= 0xFE;
+                        self.mem_unit.io_registers[KEY1_ADDR - IO_START_ADDR] |= val & 1;
                     } else {
-                        self.mem_unit.io_registers[0x4D] = val;
+                        self.mem_unit.io_registers[KEY1_ADDR - IO_START_ADDR] = val;
                     }
                 }
             }
-            0xFF4F => {
+            VBK_ADDR => {
                 if self.mem_unit.cgb {
-                    // println!(
-                    //     "{}",
-                    //     format!("vram bank to {} at pc: {:#06X}", val, self.cpu.pc)
-                    // );
                     self.mem_unit.vram_bank = val & 1;
-                    self.mem_unit.io_registers[0x4F] = 0b11111110 | (val & 1);
+                    self.mem_unit.io_registers[VBK_ADDR - IO_START_ADDR] = 0b11111110 | (val & 1);
                 }
             }
             0xFF50 => {
                 if self.mem_unit.in_boot_rom {
-                    println!("unloaded!");
                     self.unload_boot_rom();
                     self.mem_unit.in_boot_rom = false;
                 }
             }
-            0xFF52 => {
-                self.mem_unit.io_registers[addr - 0xFF00] = val | 0xF;
+            HDMA2_ADDR => {
+                self.mem_unit.io_registers[addr - IO_START_ADDR] = val | 0xF;
             }
-            0xFF53 => {
-                self.mem_unit.io_registers[addr - 0xFF00] = val | 0xE0;
+            HDMA3_ADDR => {
+                self.mem_unit.io_registers[addr - IO_START_ADDR] = val | 0xE0;
             }
-            0xFF54 => {
-                self.mem_unit.io_registers[addr - 0xFF00] = val | 0xF;
+            HDMA4_ADDR => {
+                self.mem_unit.io_registers[addr - IO_START_ADDR] = val | 0xF;
             }
-            0xFF55 => {
+            HDMA5_ADDR => {
                 if self.mem_unit.cgb {
                     if self.mem_unit.hdma_active {
-                        println!("interrupting hdma");
                         if (val >> 7) == 0 {
-                            println!("stopping HDMA!");
                             self.mem_unit.hdma_active = false;
-                            self.mem_unit.io_registers[0x55] |= 0x80;
+                            self.mem_unit.io_registers[HDMA5_ADDR - IO_START_ADDR] |= 0x80;
                         }
                     } else {
-                        self.mem_unit.io_registers[0x55] = val;
+                        self.mem_unit.io_registers[HDMA5_ADDR - IO_START_ADDR] = val;
                         self.hdma_transfer();
                     }
-                    // println!(
-                    //     "HDMA STARTING AT MODE {} and iter {}",
-                    //     self.mem_unit.ppu_mode, self.iteration_count
-                    // );
                 }
             }
-            0xFF68 => {
+            BCPS_ADDR => {
                 self.mem_unit.bg_color_inc = (val >> 7) == 1;
-                self.mem_unit.io_registers[0x69] = val & 0x3F;
-                self.mem_unit.io_registers[0x68] = val;
+                self.mem_unit.io_registers[BCPD_ADDR - IO_START_ADDR] = val & 0x3F;
+                self.mem_unit.io_registers[BCPS_ADDR - IO_START_ADDR] = val;
             }
-            0xFF69 => {
-                self.mem_unit.bg_color_ram[self.mem_unit.io_registers[0x69] as usize] = val;
+            BCPD_ADDR => {
+                self.mem_unit.bg_color_ram
+                    [self.mem_unit.io_registers[BCPD_ADDR - IO_START_ADDR] as usize] = val;
                 if self.mem_unit.bg_color_inc {
-                    self.mem_unit.io_registers[0x69] = (self.mem_unit.io_registers[0x69] + 1) % 64;
+                    self.mem_unit.io_registers[BCPD_ADDR - IO_START_ADDR] =
+                        (self.mem_unit.io_registers[BCPD_ADDR - IO_START_ADDR] + 1) % 64;
                 }
             }
-            0xFF6A => {
+            OCPS_ADDR => {
                 self.mem_unit.obj_color_inc = (val >> 7) == 1;
-                self.mem_unit.io_registers[0x6B] = val & 0x3F;
-                self.mem_unit.io_registers[0x6A] = val;
+                self.mem_unit.io_registers[OCPD_ADDR - IO_START_ADDR] = val & 0x3F;
+                self.mem_unit.io_registers[OCPS_ADDR - IO_START_ADDR] = val;
             }
-            0xFF6B => {
-                self.mem_unit.obj_color_ram[self.mem_unit.io_registers[0x6B] as usize] = val;
+            OCPD_ADDR => {
+                self.mem_unit.obj_color_ram
+                    [self.mem_unit.io_registers[OCPD_ADDR - IO_START_ADDR] as usize] = val;
                 if self.mem_unit.obj_color_inc {
-                    self.mem_unit.io_registers[0x6B] = (self.mem_unit.io_registers[0x6B] + 1) % 64;
+                    self.mem_unit.io_registers[OCPD_ADDR - IO_START_ADDR] =
+                        (self.mem_unit.io_registers[OCPD_ADDR - IO_START_ADDR] + 1) % 64;
                 }
             }
-            0xFF70 => {
+            SVBK_ADDR => {
                 if self.mem_unit.cgb {
-                    // println!(
-                    //     "{}",
-                    //     format!(
-                    //         "wram bank to {} ({}) at pc {:#06X}",
-                    //         val,
-                    //         (val & 0b111),
-                    //         self.cpu.pc
-                    //     )
-                    // );
                     self.mem_unit.wram_bank = (val & 0b111) as usize;
                     if self.mem_unit.wram_bank == 0 {
                         self.mem_unit.wram_bank += 1;
                     }
-                    self.mem_unit.io_registers[0x70] = 0b11111000 | self.mem_unit.wram_bank as u8;
+                    self.mem_unit.io_registers[SVBK_ADDR - IO_START_ADDR] =
+                        0b11111000 | self.mem_unit.wram_bank as u8;
                 }
             }
-            0xFF01..=0xFF7F => self.mem_unit.io_registers[addr - 0xFF00] = val,
-            0xFF80..=0xFFFE => self.mem_unit.high_ram[addr - 0xFF80] = val,
-            0xFFFF => self.mem_unit.interrupt_enable = val,
+            0xFF00..=0xFF7F => self.mem_unit.io_registers[addr - IO_START_ADDR] = val,
+            0xFF80..=0xFFFE => self.mem_unit.high_ram[addr - HRAM_START_ADDR] = val,
+            INT_ENABLE_ADDR => self.mem_unit.interrupt_enable = val,
             _ => {
                 println!("bad general write!")
             }
@@ -803,25 +719,24 @@ impl GameBoyEmulator {
 
     fn dma_transfer(&mut self, reg: usize) {
         let start_address = reg << 8;
-        //println!("{}", format!("DMA TRANSFER from {:X}", start_address));
         match reg >> 4 {
             0x0..=0x3 => {
-                let end_address = (start_address + 0xA0) as usize;
+                let end_address = (start_address + DMA_LENGTH) as usize;
                 self.mem_unit
                     .oam
                     .copy_from_slice(&self.mem_unit.rom[start_address..end_address]);
             }
             0x4..=0x7 => {
                 let adjusted_start_address =
-                    start_address - 0x4000 + 0x4000 * self.mem_unit.rom_bank;
-                let adjusted_end_address = adjusted_start_address + 0xA0;
+                    start_address - ROM_BANK_SIZE + ROM_BANK_SIZE * self.mem_unit.rom_bank;
+                let adjusted_end_address = adjusted_start_address + DMA_LENGTH;
                 self.mem_unit.oam.copy_from_slice(
                     &self.mem_unit.rom[adjusted_start_address..adjusted_end_address],
                 );
             }
             0x8..=0x9 => {
-                let adjusted_start_address = start_address - 0x8000;
-                let adjusted_end_address = adjusted_start_address + 0xA0;
+                let adjusted_start_address = start_address - VRAM_START_ADDR;
+                let adjusted_end_address = adjusted_start_address + DMA_LENGTH;
                 if self.mem_unit.vram_bank == 0 {
                     self.mem_unit.oam.copy_from_slice(
                         &self.mem_unit.vram_0[adjusted_start_address..adjusted_end_address],
@@ -834,23 +749,24 @@ impl GameBoyEmulator {
             }
             0xA..=0xB => {
                 let adjusted_start_address =
-                    start_address - 0xA000 + 0x2000 * (self.mem_unit.ram_bank);
-                let adjusted_end_address = adjusted_start_address + 0xA0;
+                    start_address - ERAM_START_ADDR + ERAM_BANK_SIZE * (self.mem_unit.ram_bank);
+                let adjusted_end_address = adjusted_start_address + DMA_LENGTH;
                 self.mem_unit.oam.copy_from_slice(
                     &self.mem_unit.external_ram[adjusted_start_address..adjusted_end_address],
                 );
             }
             0xC => {
-                let adjusted_start_address = (start_address - 0xC000) as usize;
-                let adjusted_end_address = adjusted_start_address + 0xA0;
+                let adjusted_start_address = (start_address - WRAM_START_ADDR) as usize;
+                let adjusted_end_address = adjusted_start_address + DMA_LENGTH;
                 self.mem_unit.oam.copy_from_slice(
                     &self.mem_unit.internal_ram[adjusted_start_address..adjusted_end_address],
                 );
             }
             0xD => {
-                let adjusted_start_address =
-                    (start_address - 0xD000 + 0x1000 * self.mem_unit.wram_bank) as usize;
-                let adjusted_end_address = adjusted_start_address + 0xA0;
+                let adjusted_start_address = (start_address - WRAM_START_ADDR - WRAM_BANK_SIZE
+                    + WRAM_BANK_SIZE * self.mem_unit.wram_bank)
+                    as usize;
+                let adjusted_end_address = adjusted_start_address + DMA_LENGTH;
                 self.mem_unit.oam.copy_from_slice(
                     &self.mem_unit.internal_ram[adjusted_start_address..adjusted_end_address],
                 );
@@ -861,27 +777,19 @@ impl GameBoyEmulator {
     }
     fn hdma_transfer(&mut self) {
         let hdma5 = self.get_memory(HDMA5_ADDR, SOURCE);
-        self.mem_unit.hdma_current_source_addr = (((self.get_memory(HDMA1_ADDR, SOURCE) as usize)
-            << 8)
-            + self.get_memory(HDMA2_ADDR, SOURCE) as usize)
+        self.mem_unit.hdma_current_source_addr = combine_bytes(
+            self.get_memory(HDMA1_ADDR, SOURCE),
+            self.get_memory(HDMA2_ADDR, SOURCE),
+        ) as usize
             & 0xFFF0;
-        self.mem_unit.hdma_current_dest_addr = ((((self.get_memory(HDMA3_ADDR, SOURCE) as usize)
-            << 8)
-            + self.get_memory(HDMA4_ADDR, SOURCE) as usize)
+        self.mem_unit.hdma_current_dest_addr = (combine_bytes(
+            self.get_memory(HDMA3_ADDR, SOURCE),
+            self.get_memory(HDMA4_ADDR, SOURCE),
+        ) as usize
             & 0x1FF0)
             | 0x8000;
         self.mem_unit.hdma_blocks = (hdma5 & 0x7F) + 1;
         let gen_dma = (hdma5 >> 7) == 0;
-        // println!(
-        //     "{}",
-        //     format!(
-        //         "HDMA, gen is {} with 0x{:X} blocks and going from {:X} to {:X}",
-        //         gen_dma,
-        //         self.mem_unit.hdma_blocks,
-        //         self.mem_unit.hdma_current_source_addr,
-        //         self.mem_unit.hdma_current_dest_addr
-        //     )
-        // );
         if gen_dma {
             for _ in 0..self.mem_unit.hdma_blocks {
                 self.hdma_block_transfer()
@@ -889,7 +797,7 @@ impl GameBoyEmulator {
         } else {
             self.mem_unit.hdma_active = true;
             self.mem_unit.hdma_primed = true;
-            self.mem_unit.io_registers[0x55] &= 0x7F;
+            self.mem_unit.io_registers[HDMA5_ADDR - IO_START_ADDR] &= 0x7F;
         }
     }
     pub fn hdma_block_transfer(&mut self) {
@@ -897,50 +805,49 @@ impl GameBoyEmulator {
         let copy_data = match high_nibble_source {
             0x0..=0x3 => {
                 &self.mem_unit.rom[self.mem_unit.hdma_current_source_addr
-                    ..(self.mem_unit.hdma_current_source_addr + 0x10)]
+                    ..(self.mem_unit.hdma_current_source_addr + HDMA_BLOCK_LENGTH)]
             }
             0x4..=0x7 => {
                 let adjusted_address = self.mem_unit.hdma_current_source_addr
-                    + 0x4000 * self.mem_unit.rom_bank
-                    - 0x4000;
-                &self.mem_unit.rom[adjusted_address..(adjusted_address + 0x10)]
+                    + ROM_BANK_SIZE * self.mem_unit.rom_bank
+                    - ROM_BANK_SIZE;
+                &self.mem_unit.rom[adjusted_address..(adjusted_address + HDMA_BLOCK_LENGTH)]
             }
             0xA..=0xB => {
-                let adjusted_address = self.mem_unit.hdma_current_source_addr - 0xA000
-                    + 0x2000 * self.mem_unit.ram_bank;
-                &self.mem_unit.external_ram[adjusted_address..(adjusted_address + 0x10)]
+                let adjusted_address = self.mem_unit.hdma_current_source_addr - ERAM_START_ADDR
+                    + ERAM_BANK_SIZE * self.mem_unit.ram_bank;
+                &self.mem_unit.external_ram
+                    [adjusted_address..(adjusted_address + HDMA_BLOCK_LENGTH)]
             }
             0xC => {
-                let adjusted_address = self.mem_unit.hdma_current_source_addr - 0xC000;
-                &self.mem_unit.internal_ram[adjusted_address..(adjusted_address + 0x10)]
+                let adjusted_address = self.mem_unit.hdma_current_source_addr - WRAM_START_ADDR;
+                &self.mem_unit.internal_ram
+                    [adjusted_address..(adjusted_address + HDMA_BLOCK_LENGTH)]
             }
             0xD => {
-                let adjusted_address = self.mem_unit.hdma_current_source_addr - 0xD000
-                    + 0x1000 * self.mem_unit.wram_bank;
-                &self.mem_unit.internal_ram[adjusted_address..(adjusted_address + 0x10)]
+                let adjusted_address =
+                    self.mem_unit.hdma_current_source_addr - WRAM_START_ADDR - WRAM_BANK_SIZE
+                        + WRAM_BANK_SIZE * self.mem_unit.wram_bank;
+                &self.mem_unit.internal_ram
+                    [adjusted_address..(adjusted_address + HDMA_BLOCK_LENGTH)]
             }
             _ => {
                 panic!("HDMA BAD ADDRESS");
             }
         };
-        // println!(
-        //     "{}",
-        //     format!(
-        //         "block number {} transfer from {:X} to {:X}",
-        //         self.mem_unit.hdma_blocks, self.mem_unit.hdma_current_source_addr, self.mem_unit.hdma_current_dest_addr
-        //     )
-        // );
-        let adjusted_dest_address = self.mem_unit.hdma_current_dest_addr - 0x8000;
+        let adjusted_dest_address = self.mem_unit.hdma_current_dest_addr - VRAM_START_ADDR;
         if self.mem_unit.vram_bank == 0 {
-            self.mem_unit.vram_0[adjusted_dest_address..(adjusted_dest_address + 0x10)]
+            self.mem_unit.vram_0
+                [adjusted_dest_address..(adjusted_dest_address + HDMA_BLOCK_LENGTH)]
                 .copy_from_slice(copy_data);
         }
         if self.mem_unit.vram_bank == 1 {
-            self.mem_unit.vram_1[adjusted_dest_address..(adjusted_dest_address + 0x10)]
+            self.mem_unit.vram_1
+                [adjusted_dest_address..(adjusted_dest_address + HDMA_BLOCK_LENGTH)]
                 .copy_from_slice(copy_data);
         }
-        self.mem_unit.hdma_current_source_addr += 0x10;
-        self.mem_unit.hdma_current_dest_addr += 0x10;
+        self.mem_unit.hdma_current_source_addr += HDMA_BLOCK_LENGTH;
+        self.mem_unit.hdma_current_dest_addr += HDMA_BLOCK_LENGTH;
         let (source_high, source_low) = split_u16(self.mem_unit.hdma_current_source_addr as u16);
         self.write_memory(HDMA1_ADDR, source_high, SOURCE);
         self.write_memory(HDMA2_ADDR, source_low, SOURCE);
@@ -949,24 +856,23 @@ impl GameBoyEmulator {
         self.write_memory(HDMA3_ADDR, dest_high, SOURCE);
         self.write_memory(HDMA4_ADDR, dest_low, SOURCE);
         self.mem_unit.hdma_blocks -= 1;
-        self.mem_unit.io_registers[0x55] = self.mem_unit.hdma_blocks;
+        self.mem_unit.io_registers[HDMA5_ADDR - IO_START_ADDR] = self.mem_unit.hdma_blocks;
         self.cpu.waiting = true;
         self.cpu.cycle_goal += if self.double_speed { 64 } else { 32 };
         if self.mem_unit.hdma_blocks == 0 {
             self.mem_unit.hdma_active = false;
-            self.mem_unit.io_registers[0x55] = 0xFF;
-            //println!("HDMA FINISHED");
+            self.mem_unit.io_registers[HDMA5_ADDR - IO_START_ADDR] = 0xFF;
         }
     }
     pub fn dma_tick(&mut self) {
         if self.mem_unit.dma_cycles > 0 {
-            self.mem_unit.dma_cycles -= 4;
+            self.mem_unit.dma_cycles -= ADVANCE_CYCLES;
         }
         if self.mem_unit.hdma_active {
-            if self.mem_unit.hdma_primed && self.mem_unit.ppu_mode == 0 {
+            if self.mem_unit.hdma_primed && self.mem_unit.ppu_mode == HBLANK_MODE {
                 self.hdma_block_transfer();
                 self.mem_unit.hdma_primed = false;
-            } else if !self.mem_unit.hdma_primed && self.mem_unit.ppu_mode != 0 {
+            } else if !self.mem_unit.hdma_primed && self.mem_unit.ppu_mode != HBLANK_MODE {
                 self.mem_unit.hdma_primed = true;
             }
         }
@@ -974,9 +880,9 @@ impl GameBoyEmulator {
     pub fn access_vram(&self, addr: impl Into<usize>, bank: u8) -> u8 {
         let addr = addr.into() as usize;
         if bank == 0 {
-            self.mem_unit.vram_0[addr - 0x8000]
+            self.mem_unit.vram_0[addr - VRAM_START_ADDR]
         } else {
-            self.mem_unit.vram_1[addr - 0x8000]
+            self.mem_unit.vram_1[addr - VRAM_START_ADDR]
         }
     }
     pub fn get_bg_rbg(&self, palette: u8) -> [[u8; 4]; 4] {
@@ -1018,26 +924,26 @@ impl GameBoyEmulator {
         out
     }
     fn memory_initialize_after_boot(&mut self) {
-        self.mem_unit.io_registers[P1_ADDR - 0xFF00] = 0xCF;
-        self.mem_unit.io_registers[TIMA_ADDR - 0xFF00] = 0x00;
-        self.mem_unit.io_registers[TMA_ADDR - 0xFF00] = 0x00;
-        self.mem_unit.io_registers[TAC_ADDR - 0xFF00] = 0xF8;
-        self.mem_unit.io_registers[INT_FLAG_ADDR - 0xFF00] = 0xE1;
-        self.mem_unit.io_registers[LCDC_ADDR - 0xFF00] = 0x91;
-        self.mem_unit.io_registers[SCX_ADDR - 0xFF00] = 0x00;
-        self.mem_unit.io_registers[SCY_ADDR - 0xFF00] = 0x00;
-        self.mem_unit.io_registers[LYC_ADDR - 0xFF00] = 0x00;
-        self.mem_unit.io_registers[BGP_ADDR - 0xFF00] = 0xFC;
-        self.mem_unit.io_registers[WY_ADDR - 0xFF00] = 0x00;
-        self.mem_unit.io_registers[WX_ADDR - 0xFF00] = 0x00;
-        self.mem_unit.io_registers[KEY1_ADDR - 0xFF00] = 0;
-        self.mem_unit.io_registers[HDMA1_ADDR - 0xFF00] = 0xFF;
-        self.mem_unit.io_registers[HDMA2_ADDR - 0xFF00] = 0xFF;
-        self.mem_unit.io_registers[HDMA3_ADDR - 0xFF00] = 0xFF;
-        self.mem_unit.io_registers[HDMA4_ADDR - 0xFF00] = 0xFF;
-        self.mem_unit.io_registers[HDMA5_ADDR - 0xFF00] = 0xFF;
+        self.mem_unit.io_registers[P1_ADDR - IO_START_ADDR] = 0xCF;
+        self.mem_unit.io_registers[TIMA_ADDR - IO_START_ADDR] = 0x00;
+        self.mem_unit.io_registers[TMA_ADDR - IO_START_ADDR] = 0x00;
+        self.mem_unit.io_registers[TAC_ADDR - IO_START_ADDR] = 0xF8;
+        self.mem_unit.io_registers[INT_FLAG_ADDR - IO_START_ADDR] = 0xE1;
+        self.mem_unit.io_registers[LCDC_ADDR - IO_START_ADDR] = 0x91;
+        self.mem_unit.io_registers[SCX_ADDR - IO_START_ADDR] = 0x00;
+        self.mem_unit.io_registers[SCY_ADDR - IO_START_ADDR] = 0x00;
+        self.mem_unit.io_registers[LYC_ADDR - IO_START_ADDR] = 0x00;
+        self.mem_unit.io_registers[BGP_ADDR - IO_START_ADDR] = 0xFC;
+        self.mem_unit.io_registers[WY_ADDR - IO_START_ADDR] = 0x00;
+        self.mem_unit.io_registers[WX_ADDR - IO_START_ADDR] = 0x00;
+        self.mem_unit.io_registers[KEY1_ADDR - IO_START_ADDR] = 0;
+        self.mem_unit.io_registers[HDMA1_ADDR - IO_START_ADDR] = 0xFF;
+        self.mem_unit.io_registers[HDMA2_ADDR - IO_START_ADDR] = 0xFF;
+        self.mem_unit.io_registers[HDMA3_ADDR - IO_START_ADDR] = 0xFF;
+        self.mem_unit.io_registers[HDMA4_ADDR - IO_START_ADDR] = 0xFF;
+        self.mem_unit.io_registers[HDMA5_ADDR - IO_START_ADDR] = 0xFF;
 
-        self.mem_unit.io_registers[BGP_ADDR - 0xFF00] = 0xFC;
+        self.mem_unit.io_registers[BGP_ADDR - IO_START_ADDR] = 0xFC;
         self.mem_unit.bg_color_ram.copy_from_slice(&[255; 64]);
         self.write_memory(SVBK_ADDR, 1, SOURCE);
         self.mem_unit.interrupt_enable = 0;
@@ -1057,7 +963,7 @@ impl GameBoyEmulator {
         if self.mem_unit.cgb {
             self.mem_unit.rom[0x200..0x900].copy_from_slice(&self.mem_unit.hold_mem[0x100..0x800]);
         }
-        self.mem_unit.cpu_initialize = true;
+        self.initialize_after_boot();
         self.memory_initialize_after_boot();
     }
 }

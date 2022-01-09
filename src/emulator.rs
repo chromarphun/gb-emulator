@@ -6,10 +6,8 @@ use crate::constants::*;
 use crate::cpu::CentralProcessingUnit;
 use crate::epu::EventProcessingUnit;
 use crate::memory::MemoryUnit;
-//use crate::pdu::PictureDisplayUnit;
 use crate::ppu::PictureProcessingUnit;
 use crate::timing::Timer;
-use std::fs::File;
 use std::time::{Duration, Instant};
 
 #[derive(PartialEq, Debug)]
@@ -26,12 +24,10 @@ pub struct GameBoyEmulator {
     pub cpu: CentralProcessingUnit,
     pub mem_unit: MemoryUnit,
     pub ppu: PictureProcessingUnit,
-    //pub pdu: PictureDisplayUnit,
     pub epu: EventProcessingUnit,
     pub apu: AudioProcessingUnit,
     pub timer: Timer,
     pub sdl_context: sdl2::Sdl,
-    pub log: File,
     pub double_speed: bool,
     pub cgb: bool,
     pub running: bool,
@@ -74,10 +70,6 @@ impl GameBoyEmulator {
             timer: Timer::new(),
             sdl_context,
             apu: AudioProcessingUnit::new(audio_subsystem),
-            log: File::create(
-                "C://Users//chrom//Documents//Emulators//gb-emulator//src//commands.log",
-            )
-            .expect("Unable to create file"),
             double_speed: false,
             cgb: false,
             running: true,

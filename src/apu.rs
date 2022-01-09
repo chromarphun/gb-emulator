@@ -214,7 +214,7 @@ pub struct AudioProcessingUnit {
     channel_1_sweep_period: u8,
     channel_1_sweep_shift: u8,
     channel_1_neg_after_trigger: bool,
-    cycle_count_1: u32,
+    cycle_count: u32,
 
     so1_level: Arc<RwLock<f32>>,
     so2_level: Arc<RwLock<f32>>,
@@ -239,7 +239,6 @@ pub struct AudioProcessingUnit {
     channel_3_so2_enable: Arc<AtomicU8>,
 
     pub wave_ram: Arc<Mutex<[u8; 16]>>,
-    channel_4_volume_count: u8,
     channel_4_lsfr: Arc<AtomicU16>,
     channel_4_enable: Arc<AtomicBool>,
     channel_4_frequency: Arc<AtomicU32>,
@@ -255,7 +254,7 @@ pub struct AudioProcessingUnit {
 
 impl AudioProcessingUnit {
     pub fn new(audio_subsystem: AudioSubsystem) -> AudioProcessingUnit {
-        let cycle_count_1 = 0;
+        let cycle_count = 0;
         let so1_level = Arc::new(RwLock::new(0.0));
         let so2_level = Arc::new(RwLock::new(0.0));
         let all_sound_enable = Arc::new(AtomicBool::new(true));
@@ -313,7 +312,6 @@ impl AudioProcessingUnit {
         let channel_3_so2_level_cb = Arc::clone(&so2_level);
         let channel_3_all_sound_enable_cb = Arc::clone(&all_sound_enable);
 
-        let channel_4_volume_count = 0;
         let channel_4_lsfr = Arc::new(AtomicU16::new(0));
         let channel_4_enable = Arc::new(AtomicBool::new(false));
         let channel_4_frequency = Arc::new(AtomicU32::new(0));
@@ -433,7 +431,7 @@ impl AudioProcessingUnit {
             channel_1_frequency,
             channel_1_shadow_frequency: 0,
             channel_2_frequency,
-            cycle_count_1,
+            cycle_count,
 
             so1_level,
             so2_level,
@@ -463,7 +461,6 @@ impl AudioProcessingUnit {
             channel_3_so2_enable,
 
             wave_ram,
-            channel_4_volume_count,
             channel_4_lsfr,
             channel_4_enable,
             channel_4_frequency,
@@ -502,18 +499,8 @@ impl GameBoyEmulator {
         self.write_memory(NR52_ADDR, self.get_memory(NR52_ADDR, SOURCE) | mask, SOURCE);
     }
     pub fn apu_power_up(&mut self) {
-        self.apu.cycle_count_1 = 0;
+        self.apu.cycle_count = 0;
         self.apu.sequence_counter = 0;
-        // let length_addrs_masks_max = [
-        //     (NR11_ADDR, 0x1F, 64),
-        //     (NR21_ADDR, 0x1F, 64),
-        //     (NR31_ADDR, 0xFF, 256),
-        //     (NR41_ADDR, 0x1F, 64),
-        // ];
-        // for (ind, (addr, mask, max)) in length_addrs_masks_max.iter().enumerate() {
-        //     self.apu.length_counters[ind] = *max - (self.get_memory(*addr, SOURCE) & *mask) as u16;
-        // }
-        println!("apu power up!");
         self.apu.all_sound_enable.store(true, Ordering::Relaxed);
         self.apu.apu_power = true;
     }
@@ -576,12 +563,7 @@ impl GameBoyEmulator {
         };
         if new_freq >= MAX_FREQ_VAL {
             self.disable_channel(1);
-            //println!("disabling 1 from sweep at {}", self.iteration_count);
         } else {
-            // println!(
-            //     "running sweep at {}, current shadow freq: {}, new freq {}",
-            //     self.iteration_count, self.apu.channel_1_shadow_frequency, new_freq
-            // );
             if self.apu.channel_1_sweep_shift != 0 && clocked {
                 self.apu
                     .channel_1_frequency
@@ -605,11 +587,6 @@ impl GameBoyEmulator {
     }
     fn length_unit(&mut self, channel: usize) {
         self.apu.length_counters[channel - 1] -= 1;
-        // println!(
-        //     "decreasing length down to {} for {}",
-        //     self.apu.length_counters[channel - 1],
-        //     channel
-        // );
         if self.apu.length_counters[channel - 1] == 0 {
             self.disable_channel(channel);
         }
@@ -664,10 +641,7 @@ impl GameBoyEmulator {
             4 => (0x3F, 64),
             _ => panic!("Bad channel!"),
         };
-        // println!(
-        //     "{}",
-        //     format!("loading (using {:#04X}) in channel {} length", val, channel)
-        // );
+
         self.apu.length_counters[channel - 1] = max - (val as u16 & mask);
     }
     pub fn vol_env_write(&mut self, channel: usize, val: u8) {
@@ -736,7 +710,6 @@ impl GameBoyEmulator {
             .store(((val >> 3) & 1) == 1, Ordering::Relaxed);
     }
     pub fn sweep_var_update(&mut self, val: u8) {
-        //println!("sweep var update");
         let (sweep_shift, sweep_period, sweep_inc) =
             { (val & 0b111, (val >> 4) & 0b111, ((val >> 3) & 1) == 0) };
         self.apu.channel_1_sweep_shift = sweep_shift;
@@ -745,7 +718,6 @@ impl GameBoyEmulator {
         if sweep_inc && self.apu.channel_1_neg_after_trigger {
             self.disable_channel(1);
         }
-        //println!("current NR13 is {}", self.get_memory(NR13_ADDR, SOURCE));
     }
     pub fn nr50_write(&mut self, val: u8) {
         *self.apu.so1_level.write().unwrap() = (val & 0x7) as f32 / 7.0;
@@ -792,7 +764,6 @@ impl GameBoyEmulator {
         }
     }
     fn trigger_channel_1(&mut self) {
-        //println!("----");
         self.apu.channel_1_neg_after_trigger = false;
         self.enable_channel(1);
         self.dac_check(1);
@@ -817,28 +788,13 @@ impl GameBoyEmulator {
         self.apu.channel_1_sweep_enable =
             self.apu.channel_1_sweep_shift != 0 || self.apu.channel_1_sweep_period != 0;
         self.apu.channel_1_shadow_frequency = self.apu.channel_1_frequency.load(Ordering::Relaxed);
-        // println!(
-        //     "{}",
-        //     format!(
-        //         "1 initialized, length is {}, iter_count: {}",
-        //         self.iteration_count, self.apu.length_counters[CH1_IND],
-        //     )
-        // );
+
         if self.apu.channel_1_sweep_shift != 0 {
             self.sweep_unit(false);
         }
-
-        //println!("----");
     }
 
     fn trigger_channel_2(&mut self) {
-        // println!(
-        //     "2 initialized, current length: {}, length clock: {}, length_enable: {}, iter_count: {}",
-        //     self.apu.length_counters[CH2_IND],
-        //     self.apu.cycle_count_1 % CYCLE_COUNT_256HZ,
-        //     self.apu.length_enables[CH2_IND],
-        //     self.iteration_count
-        // );
         self.apu.vol_timers[CH2_IND] = if self.apu.vol_periods[CH2_IND] == 0 {
             8
         } else {
@@ -875,11 +831,10 @@ impl GameBoyEmulator {
     }
 
     pub fn apu_advance(&mut self) {
-        self.apu.cycle_count_1 = (self.apu.cycle_count_1 + ADVANCE_CYCLES) % CYCLE_COUNT_64HZ;
+        self.apu.cycle_count = (self.apu.cycle_count + ADVANCE_CYCLES) % CYCLE_COUNT_64HZ;
 
-        if (self.apu.cycle_count_1 % CYCLE_COUNT_512HZ) == 0 && self.apu.apu_power {
+        if (self.apu.cycle_count % CYCLE_COUNT_512HZ) == 0 && self.apu.apu_power {
             self.apu.sequence_counter = (self.apu.sequence_counter + 1) % 8;
-            //println!("clock at counter {}!", self.apu.sequence_counter);
             if self.apu.sequence_counter % 2 == 1 {
                 if self.apu.length_enables[CH1_IND] && self.apu.length_counters[CH1_IND] > 0 {
                     self.length_unit(1);
