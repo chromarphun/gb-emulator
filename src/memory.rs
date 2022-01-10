@@ -31,6 +31,8 @@ fn split_u16(val: u16) -> (u8, u8) {
 fn convert_to_8_bit(color5: u8) -> u8 {
     (color5 << 3) | (color5 >> 2)
 }
+
+#[derive(Serialize, Deserialize, Clone, Copy)]
 enum CartType {
     Uninitialized,
     RomOnly,
@@ -41,7 +43,8 @@ enum CartType {
 }
 #[derive(Serialize, Deserialize)]
 struct SaveGame {
-    vram: Vec<u8>,
+    vram_0: Vec<u8>,
+    vram_1: Vec<u8>,
     external_ram: Vec<u8>,
     internal_ram: Vec<u8>,
     oam: Vec<u8>,
@@ -54,10 +57,30 @@ struct SaveGame {
     mbc1_0_bank: usize,
     mbc1_5_bit_reg: usize,
     mbc1_2_bit_reg: usize,
+    rom_bank_bits: usize,
     ram_enable: bool,
+    cartridge_type: CartType,
+    available_rom_banks: usize,
+    available_ram_banks: u8,
     hold_mem: Vec<u8>,
-    pub in_boot_rom: bool,
+    in_boot_rom: bool,
+    directional_presses: u8,
+    action_presses: u8,
     dma_cycles: u32,
+    ppu_mode: u8,
+    bg_color_ram: Vec<u8>,
+    obj_color_ram: Vec<u8>,
+    bg_color_inc: bool,
+    obj_color_inc: bool,
+    vram_bank: u8,
+    wram_bank: usize,
+    cgb: bool,
+    hdma_primed: bool,
+    hdma_blocks: u8,
+    hdma_active: bool,
+    hdma_current_dest_addr: usize,
+    hdma_current_source_addr: usize,
+    valid_io: Vec<bool>,
     cpu: CentralProcessingUnit,
     ppu: PictureProcessingUnit,
     timer: Timer,
@@ -90,8 +113,8 @@ pub struct MemoryUnit {
     pub action_presses: u8,
     dma_cycles: u32,
     pub ppu_mode: u8,
-    bg_color_ram: [u8; 64],
-    obj_color_ram: [u8; 64],
+    bg_color_ram: Vec<u8>,
+    obj_color_ram: Vec<u8>,
     bg_color_inc: bool,
     obj_color_inc: bool,
     vram_bank: u8,
@@ -102,12 +125,12 @@ pub struct MemoryUnit {
     hdma_active: bool,
     hdma_current_dest_addr: usize,
     hdma_current_source_addr: usize,
-    valid_io: [bool; 0x80],
+    valid_io: Vec<bool>,
 }
 
 impl MemoryUnit {
     pub fn new() -> MemoryUnit {
-        let mut valid_io = [true; 0x80];
+        let mut valid_io = vec![true; 0x80];
         for ind in NON_BLOCK_INVALID_IO.iter() {
             valid_io[*ind] = false;
         }
@@ -139,8 +162,8 @@ impl MemoryUnit {
             action_presses: 0xF,
             dma_cycles: 0,
             ppu_mode: 0,
-            bg_color_ram: [0; 64],
-            obj_color_ram: [0; 64],
+            bg_color_ram: vec![0; 64],
+            obj_color_ram: vec![0; 64],
             bg_color_inc: false,
             obj_color_inc: false,
             vram_bank: 0,
@@ -1005,7 +1028,8 @@ impl GameBoyEmulator {
     pub fn save_game(&self, path: &Path) {
         let save_file = File::create(&path).unwrap();
         let save_data = SaveGame {
-            vram: self.mem_unit.vram_0.clone(),
+            vram_0: self.mem_unit.vram_0.clone(),
+            vram_1: self.mem_unit.vram_1.clone(),
             external_ram: self.mem_unit.external_ram.clone(),
             internal_ram: self.mem_unit.internal_ram.clone(),
             oam: self.mem_unit.oam.clone(),
@@ -1018,10 +1042,30 @@ impl GameBoyEmulator {
             mbc1_0_bank: self.mem_unit.mbc1_0_bank,
             mbc1_5_bit_reg: self.mem_unit.mbc1_5_bit_reg,
             mbc1_2_bit_reg: self.mem_unit.mbc1_2_bit_reg,
+            rom_bank_bits: self.mem_unit.rom_bank_bits,
             ram_enable: self.mem_unit.ram_enable,
+            cartridge_type: self.mem_unit.cartridge_type,
+            available_rom_banks: self.mem_unit.available_rom_banks,
+            available_ram_banks: self.mem_unit.available_ram_banks,
             hold_mem: self.mem_unit.hold_mem.clone(),
             in_boot_rom: self.mem_unit.in_boot_rom,
+            directional_presses: self.mem_unit.directional_presses,
+            action_presses: self.mem_unit.action_presses,
             dma_cycles: self.mem_unit.dma_cycles,
+            ppu_mode: self.mem_unit.ppu_mode,
+            bg_color_ram: self.mem_unit.bg_color_ram.clone(),
+            obj_color_ram: self.mem_unit.obj_color_ram.clone(),
+            bg_color_inc: self.mem_unit.bg_color_inc,
+            obj_color_inc: self.mem_unit.obj_color_inc,
+            vram_bank: self.mem_unit.vram_bank,
+            wram_bank: self.mem_unit.wram_bank,
+            cgb: self.mem_unit.cgb,
+            hdma_primed: self.mem_unit.hdma_primed,
+            hdma_blocks: self.mem_unit.hdma_blocks,
+            hdma_active: self.mem_unit.hdma_active,
+            hdma_current_dest_addr: self.mem_unit.hdma_current_dest_addr,
+            hdma_current_source_addr: self.mem_unit.hdma_current_source_addr,
+            valid_io: self.mem_unit.valid_io.clone(),
             cpu: self.cpu,
             ppu: self.ppu.clone(),
             timer: self.timer,
@@ -1031,7 +1075,8 @@ impl GameBoyEmulator {
     pub fn open_game(&mut self, path: &Path) {
         let open_file = File::open(&path).unwrap();
         let open_data: SaveGame = bincode::deserialize_from(open_file).unwrap();
-        self.mem_unit.vram_0 = open_data.vram;
+        self.mem_unit.vram_0 = open_data.vram_0;
+        self.mem_unit.vram_1 = open_data.vram_1;
         self.mem_unit.external_ram = open_data.external_ram;
         self.mem_unit.internal_ram = open_data.internal_ram;
         self.mem_unit.oam = open_data.oam;
@@ -1044,10 +1089,30 @@ impl GameBoyEmulator {
         self.mem_unit.mbc1_0_bank = open_data.mbc1_0_bank;
         self.mem_unit.mbc1_5_bit_reg = open_data.mbc1_5_bit_reg;
         self.mem_unit.mbc1_2_bit_reg = open_data.mbc1_2_bit_reg;
+        self.mem_unit.rom_bank_bits = open_data.rom_bank_bits;
         self.mem_unit.ram_enable = open_data.ram_enable;
+        self.mem_unit.cartridge_type = open_data.cartridge_type;
+        self.mem_unit.available_rom_banks = open_data.available_rom_banks;
+        self.mem_unit.available_ram_banks = open_data.available_ram_banks;
         self.mem_unit.hold_mem = open_data.hold_mem;
         self.mem_unit.in_boot_rom = open_data.in_boot_rom;
+        self.mem_unit.directional_presses = open_data.directional_presses;
+        self.mem_unit.action_presses = open_data.action_presses;
         self.mem_unit.dma_cycles = open_data.dma_cycles;
+        self.mem_unit.ppu_mode = open_data.ppu_mode;
+        self.mem_unit.bg_color_ram = open_data.bg_color_ram;
+        self.mem_unit.obj_color_ram = open_data.obj_color_ram;
+        self.mem_unit.bg_color_inc = open_data.bg_color_inc;
+        self.mem_unit.obj_color_inc = open_data.obj_color_inc;
+        self.mem_unit.vram_bank = open_data.vram_bank;
+        self.mem_unit.wram_bank = open_data.wram_bank;
+        self.mem_unit.cgb = open_data.cgb;
+        self.mem_unit.hdma_primed = open_data.hdma_primed;
+        self.mem_unit.hdma_blocks = open_data.hdma_blocks;
+        self.mem_unit.hdma_active = open_data.hdma_active;
+        self.mem_unit.hdma_current_dest_addr = open_data.hdma_current_dest_addr;
+        self.mem_unit.hdma_current_source_addr = open_data.hdma_current_source_addr;
+        self.mem_unit.valid_io = open_data.valid_io;
         self.cpu = open_data.cpu;
         self.ppu = open_data.ppu;
         self.timer = open_data.timer;
