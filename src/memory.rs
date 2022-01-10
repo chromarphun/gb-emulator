@@ -986,11 +986,10 @@ impl GameBoyEmulator {
         if self.mem_unit.cgb {
             self.mem_unit.rom[0x200..0x900].copy_from_slice(&self.mem_unit.hold_mem[0x100..0x800]);
         }
-        self.initialize_after_boot();
+        self.cpu_initialize_after_boot();
         self.memory_initialize_after_boot();
     }
-}
-impl GameBoyEmulator {
+
     pub fn load_rom(&mut self, path: &Path) {
         let mut f = File::open(path).expect("File problem!");
         f.read_to_end(&mut self.mem_unit.rom).expect("Read issue!");

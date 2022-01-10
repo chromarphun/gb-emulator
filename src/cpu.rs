@@ -422,7 +422,7 @@ impl CentralProcessingUnit {
 }
 
 impl GameBoyEmulator {
-    pub fn initialize_after_boot(&mut self) {
+    pub fn cpu_initialize_after_boot(&mut self) {
         if self.cgb {
             self.cpu.cgb_initialize_after_boot();
         } else {
