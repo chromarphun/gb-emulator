@@ -119,7 +119,13 @@ pub const BG_COLOR_1_3_PRIORITY: u8 = 205;
 pub const BG_HIGH_PRIORITY: u8 = 0;
 pub const DRAWING_MODE: u8 = 3;
 pub const VBLANK_MODE: u8 = 1;
+pub const OAM_SEARCH_MODE: u8 = 2;
 pub const HBLANK_MODE: u8 = 0;
+pub const OAM_SPRITE_NUM: usize = 40;
+pub const MAX_SPRITES_PER_ROW: usize = 10;
+pub const TILE_MAP_1_START_ADDR: usize = 0x9800;
+pub const TILE_MAP_2_START_ADDR: usize = 0x9C00;
+pub const PIXEL_LENGTH: usize = 4;
 
 //APU Specific Constants
 pub const DUTY_CONVERSION: [f32; 4] = [0.125, 0.25, 0.5, 0.75];
