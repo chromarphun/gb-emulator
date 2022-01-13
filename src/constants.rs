@@ -15,13 +15,12 @@ pub const CARRY_LIMIT_8: u16 = 255;
 pub const INTERRUPT_DOTS: u32 = 20;
 
 //Timing Constants
-pub const PERIODS_PER_SECOND: u32 = 64;
+pub const PERIODS_PER_SECOND: u32 = 16;
 pub const PERIOD_NS: u32 = 1_000_000_000 / PERIODS_PER_SECOND;
 pub const CYCLES_PER_SECOND: u32 = 4_194_304;
 pub const CYCLES_PER_PERIOD: u32 = CYCLES_PER_SECOND / PERIODS_PER_SECOND;
 pub const ADVANCES_PER_PERIOD: u32 = CYCLES_PER_PERIOD / ADVANCE_CYCLES;
 pub const ADVANCE_CYCLES: u32 = 4;
-pub const SAMPLES_PER_SECOND: u32 = 44100;
 
 //Address Constants
 
@@ -139,9 +138,18 @@ pub const CH1_IND: usize = 0;
 pub const CH2_IND: usize = 1;
 pub const CH3_IND: usize = 2;
 pub const CH4_IND: usize = 3;
+pub const SAMPLES_PER_SECOND: u32 = 44100;
+pub const AUDIO_DATA_HZ: u32 = 65536;
+pub const AUDIO_DATA_CYCLES: u32 = CYCLES_PER_SECOND / AUDIO_DATA_HZ;
+pub const AUDIO_BUFFER_SIZE: usize = (CYCLES_PER_PERIOD / AUDIO_DATA_CYCLES) as usize;
+pub const AUDIO_QUEUE_SINGLE_CHANNEL_SIZE: usize =
+    (SAMPLES_PER_SECOND / PERIODS_PER_SECOND) as usize;
+pub const AUDIO_QUEUE_SIZE: usize = 2 * AUDIO_QUEUE_SINGLE_CHANNEL_SIZE;
 
+pub const SAMPLING_SCALE_FACTOR: f32 =
+    (AUDIO_BUFFER_SIZE - 1) as f32 / (AUDIO_QUEUE_SINGLE_CHANNEL_SIZE - 1) as f32;
 pub const CYCLE_COUNT_16384HZ: u32 = 256;
-pub const SAMPLE_BUFFER_SIZE: u16 = 128;
+pub const CALLBACK_SAMPLES: u32 = 64;
 
 //Memory Specific Constants
 pub const VRAM_SIZE: usize = 0x2000;

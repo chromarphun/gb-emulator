@@ -83,6 +83,8 @@ impl GameBoyEmulator {
 
         while self.running {
             let now = Instant::now();
+            println!("Buffer start size: {}", self.apu.ch_1_queue.size());
+            self.buffer_check();
             for _ in 0..ADVANCES_PER_PERIOD {
                 self.cpu_advance();
                 self.timer_advance();
@@ -97,11 +99,12 @@ impl GameBoyEmulator {
                 self.iteration_count += 1;
             }
             self.event_check();
+            self.send_to_queue();
+            println!("Buffer end size: {}", self.apu.ch_1_queue.size());
             // println!(
             //     "elapsed: {}us",
             //     work_period.saturating_sub(now.elapsed()).as_micros()
             // );
-
             spin_sleep::sleep(work_period.saturating_sub(now.elapsed()));
         }
     }

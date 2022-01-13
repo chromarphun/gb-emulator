@@ -575,7 +575,7 @@ impl GameBoyEmulator {
                                 self.mem_unit.io_registers[ind] = 0;
                             }
                             self.apu.apu_power = false;
-                            self.apu.all_sound_enable.store(false, Ordering::Relaxed);
+                            self.apu.all_sound_enable = false;
                         } else if old_power_val == 0 {
                             self.apu_power_up();
                         }
@@ -602,10 +602,11 @@ impl GameBoyEmulator {
                                 }
                             }
                             0xFF1B => self.nrx1_write(3, val),
-                            0xFF1C => self.apu.channel_3_output_level.store(
-                                VOLUME_SHIFT_CONVERSION[(val as usize >> 5) & 0x3],
-                                Ordering::Relaxed,
-                            ),
+                            0xFF1C => {
+                                self.apu.channel_3_output_level =
+                                    VOLUME_SHIFT_CONVERSION[(val as usize >> 5) & 0x3]
+                            }
+
                             0xFF1D => self.update_frequency_internal_low(3, val),
                             0xFF1E => self.nrx4_write(3, val),
                             0xFF20 => self.nrx1_write(4, val),
