@@ -15,7 +15,7 @@ pub const CARRY_LIMIT_8: u16 = 255;
 pub const INTERRUPT_DOTS: u32 = 20;
 
 //Timing Constants
-pub const PERIODS_PER_SECOND: u32 = 16;
+pub const PERIODS_PER_SECOND: u32 = 64;
 pub const PERIOD_NS: u32 = 1_000_000_000 / PERIODS_PER_SECOND;
 pub const CYCLES_PER_SECOND: u32 = 4_194_304;
 pub const CYCLES_PER_PERIOD: u32 = CYCLES_PER_SECOND / PERIODS_PER_SECOND;

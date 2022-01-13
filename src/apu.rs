@@ -501,12 +501,11 @@ impl GameBoyEmulator {
         for (i, data) in self.apu.ch_1_queue_data.iter_mut().enumerate() {
             let ind = (i / 2) as f32;
             let buffer_index = (ind as f32 * SAMPLING_SCALE_FACTOR).round() as usize;
-            //println!("ind {} to buffer ind {}", ind, buffer_index);
-            if i % 2 == 0 {
-                *data = self.apu.ch_1_so2_buffer[buffer_index];
+            *data = if i % 2 == 0 {
+                self.apu.ch_1_so2_buffer[buffer_index]
             } else {
-                *data = self.apu.ch_1_so1_buffer[buffer_index];
-            }
+                self.apu.ch_1_so1_buffer[buffer_index]
+            };
         }
         self.apu.ch_1_buffer_pointer = 0;
         self.apu.ch_1_queue.queue(&self.apu.ch_1_queue_data);
