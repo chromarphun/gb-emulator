@@ -11,7 +11,6 @@ use crate::bootroms::*;
 use crate::constants::*;
 use crate::ppu::PictureProcessingUnit;
 use crate::timing::Timer;
-use std::sync::atomic::Ordering;
 
 const SOURCE: RequestSource = RequestSource::MAU;
 
@@ -603,7 +602,7 @@ impl GameBoyEmulator {
                             }
                             0xFF1B => self.nrx1_write(3, val),
                             0xFF1C => {
-                                self.apu.channel_3_output_level =
+                                self.apu.ch_3_output_level =
                                     VOLUME_SHIFT_CONVERSION[(val as usize >> 5) & 0x3]
                             }
 

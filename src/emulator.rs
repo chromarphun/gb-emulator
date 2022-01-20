@@ -65,7 +65,6 @@ impl GameBoyEmulator {
             cpu: CentralProcessingUnit::new(),
             mem_unit: MemoryUnit::new(),
             ppu: PictureProcessingUnit::new(),
-            //pdu: PictureDisplayUnit::new(pixels),
             epu: EventProcessingUnit::new(event_pump),
             timer: Timer::new(),
             sdl_context,
@@ -80,10 +79,9 @@ impl GameBoyEmulator {
     }
     pub fn run(&mut self) {
         let work_period = Duration::new(0, PERIOD_NS);
-
         while self.running {
             let now = Instant::now();
-            println!("Buffer start size: {}", self.apu.ch_1_queue.size());
+
             self.buffer_check();
             for _ in 0..ADVANCES_PER_PERIOD {
                 self.cpu_advance();
@@ -99,13 +97,7 @@ impl GameBoyEmulator {
                 self.iteration_count += 1;
             }
             self.event_check();
-            self.send_to_queue();
-            println!("Buffer end size: {}", self.apu.ch_1_queue.size());
-            // println!(
-            //     "elapsed: {}us",
-            //     work_period.saturating_sub(now.elapsed()).as_micros()
-            // );
-            spin_sleep::sleep(work_period.saturating_sub(now.elapsed()));
+            while now.elapsed() < work_period {}
         }
     }
 }
