@@ -1,6 +1,6 @@
 # Game Boy Color Emulator
 
-This is a emulator written for the Game Boy Color in Rust. As there are many emulators for the Game Boy Color out there, this was a passion project just for the enjoyment of creating one. Therefore, the bulk of this README will focus on the architecture choices and implementation details for other developers who are making emulators of their own and want to compare and contrast in addition to a history section detailing previous choices. There will also be a small section at the bottom detailing operation details, should you want to actually run it.
+This is a emulator written for the Game Boy Color in Rust. As there are many emulators for the Game Boy Color out there, this was a passion project just for the enjoyment of creating one. Therefore, the bulk of this README will focus on the architecture choices and implementation details for other developers who are making emulators of their own and want to compare and contrast in addition to a history section detailing previous choices. There will also be a small section at the bottom detailing operation details, should you want to actually run it. This README is also just specifically about my implementation, not about the Game Boy hardware in general, it assumes you're already familiar with how the Game Boy works. If you're looking for resources on how the Game Boy itself, [Pan Docs](https://gbdev.io/pandocs/) is a good place to start.
 
 ## Preface
 
@@ -85,3 +85,7 @@ The ubiquitously mentioned [Pan Docs](https://gbdev.io/pandocs/) were immensely 
 ### Test ROMs
 
 All of the [Blargg test ROMs](https://github.com/retrio/gb-test-roms) were helpful, but especially the sound and CPU instruction ones. For graphics, the [cgb-acid2](https://github.com/mattcurrie/cgb-acid2) test ROM (and it's [corresponding DMG one](https://github.com/mattcurrie/dmg-acid2)) were instrumental in nailing all of the various graphics quirks that come with the Game Boy.
+
+## Operation
+
+Seriously, why are you running this? Either way, if you have the SDL DLL in the directory, you only need to do a quick cargo run --release in order to run it. Directional keys are your D-Pad, Z is the A button, X is the B button, A is Start, S is select, 1 is to save a game, 2 is to open one (once the ROM is already loaded).
