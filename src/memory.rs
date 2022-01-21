@@ -734,9 +734,7 @@ impl GameBoyEmulator {
             0xFF00..=0xFF7F => self.mem_unit.io_registers[addr - IO_START_ADDR] = val,
             0xFF80..=0xFFFE => self.mem_unit.high_ram[addr - HRAM_START_ADDR] = val,
             INT_ENABLE_ADDR => self.mem_unit.interrupt_enable = val,
-            _ => {
-                println!("bad general write!")
-            }
+            _ => {}
         }
     }
 
@@ -794,7 +792,7 @@ impl GameBoyEmulator {
                     &self.mem_unit.internal_ram[adjusted_start_address..adjusted_end_address],
                 );
             }
-            _ => println!("DMA FAILURE"),
+            _ => {}
         }
         self.mem_unit.dma_cycles = 640;
     }

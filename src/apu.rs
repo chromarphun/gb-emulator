@@ -8,7 +8,7 @@ const SOURCE: RequestSource = RequestSource::APU;
 
 pub struct AudioProcessingUnit {
     _audio_subsystem: AudioSubsystem,
-    pub length_counters: [u16; 4],
+    length_counters: [u16; 4],
     length_enables: [bool; 4],
     sequence_counter: u8,
     initial_volumes: [u8; 4],
@@ -80,6 +80,7 @@ impl AudioProcessingUnit {
             phase_counters: [1; 4],
             apu_power: false,
             buffering: false,
+
             ch_1_shadow_frequency: 0,
             ch_1_sweep_timer: 1,
             ch_1_sweep_enable: false,
