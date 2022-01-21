@@ -317,7 +317,7 @@ fn split_byte(val: u8) -> (u8, u8) {
 pub struct CentralProcessingUnit {
     ime: bool,
     regs: [u8; NUM_REG],
-    pub pc: u16,
+    pc: u16,
     sp: u16,
     cycle_modification: u32,
     z_flag: u8,
@@ -335,7 +335,7 @@ pub struct CentralProcessingUnit {
     call_counter: i32,
     debug_var: i32,
     pub debug_action: bool,
-    pub command: usize,
+    command: usize,
 }
 
 impl CentralProcessingUnit {

@@ -14,7 +14,7 @@ fn convert_to_index(row: impl Into<usize>, column: impl Into<usize>) -> usize {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct PictureProcessingUnit {
-    pub cycle_count: u32,
+    cycle_count: u32,
     possible_sprites: Vec<[u8; 4]>,
     starting: bool,
     current_sprite_search: usize,
