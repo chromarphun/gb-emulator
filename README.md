@@ -80,7 +80,7 @@ The ubiquitously mentioned [Pan Docs](https://gbdev.io/pandocs/) were immensely 
 
 ### Software
 
-[RGBDS](https://rgbds.gbdev.io/) itself was used occasionally to make some custom test ROMs to test certain behavior. [MGBDIS](https://github.com/mattcurrie/mgbdis) was used to disassemble some less popular games for debugging that didn't have a disassembly repo on GitHub.
+[RGBDS](https://rgbds.gbdev.io/) itself was used occasionally to make some custom test ROMs to test certain behavior. [MGBDIS](https://github.com/mattcurrie/mgbdis) was used to disassemble some less popular games for debugging that didn't have a disassembly repo on GitHub. My own repo [gb-cartridge-information](https://github.com/chromarphun/gb-cartridge-information) was used to extract information about individual cartridges.
 
 ### Test ROMs
 
